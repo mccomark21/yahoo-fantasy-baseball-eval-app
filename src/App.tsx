@@ -1,121 +1,130 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
+import { loadData } from '@/lib/data-loader';
+import {
+  getFilterOptions,
+  queryPlayers,
+  type FilterOptions,
+  type PlayerRow,
+  type TimeWindow,
+} from '@/lib/queries';
+import { FilterBar } from '@/components/FilterBar';
+import { PlayerTable } from '@/components/PlayerTable';
 
-function App() {
-  const [count, setCount] = useState(0)
+type AppStatus = 'loading' | 'ready' | 'error';
+
+export default function App() {
+  const [status, setStatus] = useState<AppStatus>('loading');
+  const [error, setError] = useState<string | null>(null);
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({
+    leagues: [],
+    fantasyTeams: [],
+    positions: [],
+  });
+  const [players, setPlayers] = useState<PlayerRow[]>([]);
+  const [queryLoading, setQueryLoading] = useState(false);
+
+  const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
+  const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
+  const [selectedPositions, setSelectedPositions] = useState<string[]>([]);
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>('STD');
+
+  const defaultsSet = useRef(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await loadData();
+        const opts = await getFilterOptions();
+        setFilterOptions(opts);
+
+        if (opts.leagues.length > 0) {
+          setSelectedLeague(opts.leagues[0]);
+        }
+
+        const defaults = opts.fantasyTeams.filter(
+          (t) =>
+            t.toLowerCase().includes('free agent') ||
+            t.toLowerCase().includes('waiver')
+        );
+        if (defaults.length > 0) {
+          setSelectedTeams(defaults);
+        }
+        defaultsSet.current = true;
+
+        setStatus('ready');
+      } catch (err) {
+        console.error('Failed to load data:', err);
+        setError(err instanceof Error ? err.message : String(err));
+        setStatus('error');
+      }
+    })();
+  }, []);
+
+  const runQuery = useCallback(async () => {
+    if (status !== 'ready') return;
+    setQueryLoading(true);
+    try {
+      const rows = await queryPlayers(
+        timeWindow,
+        selectedLeague,
+        selectedTeams,
+        selectedPositions
+      );
+      setPlayers(rows);
+    } catch (err) {
+      console.error('Query failed:', err);
+    } finally {
+      setQueryLoading(false);
+    }
+  }, [status, timeWindow, selectedLeague, selectedTeams, selectedPositions]);
+
+  useEffect(() => {
+    if (!defaultsSet.current) return;
+    const timer = setTimeout(runQuery, 100);
+    return () => clearTimeout(timer);
+  }, [runQuery]);
+
+  if (status === 'loading') {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="text-lg font-medium">Loading Fantasy Baseball Data</div>
+          <div className="text-sm text-muted-foreground mt-2">
+            Initializing DuckDB and fetching data...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center text-destructive">
+          <div className="text-lg font-medium">Failed to load data</div>
+          <div className="text-sm mt-2">{error}</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+    <div className="flex flex-col h-screen">
+      <header className="px-4 py-3 border-b">
+        <h1 className="text-xl font-semibold">Fantasy Baseball Eval</h1>
+      </header>
+      <FilterBar
+        filterOptions={filterOptions}
+        selectedLeague={selectedLeague}
+        onLeagueChange={setSelectedLeague}
+        selectedTeams={selectedTeams}
+        onTeamsChange={setSelectedTeams}
+        selectedPositions={selectedPositions}
+        onPositionsChange={setSelectedPositions}
+        timeWindow={timeWindow}
+        onTimeWindowChange={setTimeWindow}
+      />
+      <PlayerTable data={players} isLoading={queryLoading} />
+    </div>
+  );
 }
-
-export default App
