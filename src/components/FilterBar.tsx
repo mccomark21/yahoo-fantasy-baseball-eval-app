@@ -11,6 +11,7 @@ import { MultiSelect } from '@/components/MultiSelect';
 
 interface FilterBarProps {
   filterOptions: FilterOptions;
+  leagueFantasyTeams: string[];
   selectedLeague: string | null;
   onLeagueChange: (league: string | null) => void;
   selectedTeams: string[];
@@ -25,6 +26,7 @@ const TIME_WINDOWS: TimeWindow[] = ['STD', '30D', '14D', '7D'];
 
 export function FilterBar({
   filterOptions,
+  leagueFantasyTeams,
   selectedLeague,
   onLeagueChange,
   selectedTeams,
@@ -60,7 +62,7 @@ export function FilterBar({
       <div className="flex flex-col gap-1">
         <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
         <MultiSelect
-          options={filterOptions.fantasyTeams}
+          options={leagueFantasyTeams}
           selected={selectedTeams}
           onChange={onTeamsChange}
           placeholder="All Teams"
@@ -71,7 +73,7 @@ export function FilterBar({
       <div className="flex flex-col gap-1">
         <label className="text-xs font-medium text-muted-foreground">Position</label>
         <MultiSelect
-          options={filterOptions.positions}
+          options={filterOptions.positions.filter(p => p !== 'SP' && p !== 'RP')}
           selected={selectedPositions}
           onChange={onPositionsChange}
           placeholder="All Positions"

@@ -2,6 +2,7 @@
 import { loadData } from '@/lib/data-loader';
 import {
   getFilterOptions,
+  getFantasyTeamsForLeague,
   queryPlayers,
   filterByVolume,
   computeZScores,
@@ -24,6 +25,7 @@ export default function App() {
   });
   const [players, setPlayers] = useState<PlayerRow[]>([]);
   const [queryLoading, setQueryLoading] = useState(false);
+  const [leagueFantasyTeams, setLeagueFantasyTeams] = useState<string[]>([]);
 
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
   const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
@@ -40,16 +42,20 @@ export default function App() {
         setFilterOptions(opts);
 
         if (opts.leagues.length > 0) {
-          setSelectedLeague(opts.leagues[0]);
-        }
+          const firstLeague = opts.leagues[0];
+          setSelectedLeague(firstLeague);
 
-        const defaults = opts.fantasyTeams.filter(
-          (t) =>
-            t.toLowerCase().includes('free agent') ||
-            t.toLowerCase().includes('waiver')
-        );
-        if (defaults.length > 0) {
-          setSelectedTeams(defaults);
+          const teams = await getFantasyTeamsForLeague(firstLeague);
+          setLeagueFantasyTeams(teams);
+
+          const defaults = teams.filter(
+            (t) =>
+              t.toLowerCase().includes('free agent') ||
+              t.toLowerCase().includes('waiver')
+          );
+          if (defaults.length > 0) {
+            setSelectedTeams(defaults);
+          }
         }
         defaultsSet.current = true;
 
@@ -79,6 +85,23 @@ export default function App() {
       setQueryLoading(false);
     }
   }, [status, timeWindow, selectedLeague, selectedTeams, selectedPositions]);
+
+  const handleLeagueChange = useCallback(async (league: string | null) => {
+    setSelectedLeague(league);
+    if (league) {
+      const teams = await getFantasyTeamsForLeague(league);
+      setLeagueFantasyTeams(teams);
+      const defaults = teams.filter(
+        (t) =>
+          t.toLowerCase().includes('free agent') ||
+          t.toLowerCase().includes('waiver')
+      );
+      setSelectedTeams(defaults.length > 0 ? defaults : []);
+    } else {
+      setLeagueFantasyTeams([]);
+      setSelectedTeams([]);
+    }
+  }, []);
 
   useEffect(() => {
     if (!defaultsSet.current) return;
@@ -117,8 +140,9 @@ export default function App() {
       </header>
       <FilterBar
         filterOptions={filterOptions}
+        leagueFantasyTeams={leagueFantasyTeams}
         selectedLeague={selectedLeague}
-        onLeagueChange={setSelectedLeague}
+        onLeagueChange={handleLeagueChange}
         selectedTeams={selectedTeams}
         onTeamsChange={setSelectedTeams}
         selectedPositions={selectedPositions}

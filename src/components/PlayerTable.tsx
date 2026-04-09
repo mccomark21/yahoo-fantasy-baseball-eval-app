@@ -18,6 +18,17 @@ import {
 import type { PlayerRow } from '@/lib/queries';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 
+const Z_SCORE_COLUMNS = new Set(['z_xwoba', 'z_pull_air_pct', 'z_bb_k', 'z_sb_per_pa']);
+
+function getZScoreBgClass(value: number | null): string {
+  if (value == null) return '';
+  if (value <= -1.5) return 'bg-red-200 dark:bg-red-900/50';
+  if (value <= -0.5) return 'bg-red-100 dark:bg-red-950/40';
+  if (value < 0.5) return '';
+  if (value < 1.5) return 'bg-green-100 dark:bg-green-950/40';
+  return 'bg-green-200 dark:bg-green-900/50';
+}
+
 const columns: ColumnDef<PlayerRow>[] = [
   {
     accessorKey: 'player_name',
@@ -33,10 +44,6 @@ const columns: ColumnDef<PlayerRow>[] = [
   {
     accessorKey: 'position',
     header: 'Position',
-  },
-  {
-    accessorKey: 'league_name',
-    header: 'League',
   },
   {
     accessorKey: 'fantasy_team',
@@ -195,7 +202,10 @@ export function PlayerTable({ data, isLoading }: PlayerTableProps) {
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id}>
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} className="whitespace-nowrap">
+                    <TableCell
+                      key={cell.id}
+                      className={`whitespace-nowrap ${Z_SCORE_COLUMNS.has(cell.column.id) ? getZScoreBgClass(cell.getValue<number | null>()) : ''}`}
+                    >
                       {flexRender(
                         cell.column.columnDef.cell,
                         cell.getContext()

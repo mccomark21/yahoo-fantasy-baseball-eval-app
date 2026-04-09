@@ -76,6 +76,19 @@ export async function getFilterOptions(): Promise<FilterOptions> {
   }
 }
 
+export async function getFantasyTeamsForLeague(league: string): Promise<string[]> {
+  const db = await getDB();
+  const conn = await db.connect();
+  try {
+    const result = await conn.query(
+      `SELECT DISTINCT fantasy_team FROM yahoo WHERE league_name = '${escapeSQL(league)}' ORDER BY fantasy_team`
+    );
+    return result.toArray().map((r) => r.fantasy_team as string);
+  } finally {
+    await conn.close();
+  }
+}
+
 function getDateFilter(timeWindow: TimeWindow): string {
   switch (timeWindow) {
     case '7D':
