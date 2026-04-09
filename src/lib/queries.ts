@@ -14,6 +14,34 @@ export interface PlayerRow {
   sb_per_pa: number | null;
   pa: number | null;
   bbe: number | null;
+  z_xwoba: number | null;
+  z_pull_air_pct: number | null;
+  z_bb_k: number | null;
+  z_sb_per_pa: number | null;
+  composite_score: number | null;
+}
+
+const VOLUME_THRESHOLD_PCT = 0.5;
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+export function filterByVolume(rows: PlayerRow[]): PlayerRow[] {
+  const paValues = rows.map((r) => r.pa).filter((v): v is number => v != null && v > 0);
+  const bbeValues = rows.map((r) => r.bbe).filter((v): v is number => v != null && v > 0);
+
+  const minPA = median(paValues) * VOLUME_THRESHOLD_PCT;
+  const minBBE = median(bbeValues) * VOLUME_THRESHOLD_PCT;
+
+  return rows.filter(
+    (r) => (r.pa ?? 0) >= minPA && (r.bbe ?? 0) >= minBBE
+  );
 }
 
 export interface FilterOptions {
@@ -142,10 +170,75 @@ export async function queryPlayers(
       sb_per_pa: toNum(row.sb_per_pa),
       pa: toNum(row.pa),
       bbe: toNum(row.bbe),
+      z_xwoba: null,
+      z_pull_air_pct: null,
+      z_bb_k: null,
+      z_sb_per_pa: null,
+      composite_score: null,
     }));
   } finally {
     await conn.close();
   }
+}
+
+const Z_SCORE_WEIGHTS = {
+  xwoba: 0.4,
+  pull_air_pct: 0.2,
+  bb_k: 0.3,
+  sb_per_pa: 0.1,
+} as const;
+
+const Z_CLAMP = 2.5;
+
+export function computeZScores(rows: PlayerRow[]): PlayerRow[] {
+  const metrics = ['xwoba', 'pull_air_pct', 'bb_k', 'sb_per_pa'] as const;
+  type MetricKey = (typeof metrics)[number];
+
+  const stats = {} as Record<MetricKey, { mean: number; std: number }>;
+
+  for (const key of metrics) {
+    const vals = rows.map((r) => r[key]).filter((v): v is number => v != null);
+    if (vals.length < 2) {
+      stats[key] = { mean: 0, std: 0 };
+      continue;
+    }
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length;
+    stats[key] = { mean, std: Math.sqrt(variance) };
+  }
+
+  return rows.map((row) => {
+    const zScores = {} as Record<`z_${MetricKey}`, number | null>;
+    let availableCount = 0;
+
+    for (const key of metrics) {
+      const val = row[key];
+      const { mean, std } = stats[key];
+      if (val == null || std === 0) {
+        zScores[`z_${key}`] = null;
+      } else {
+        const z = (val - mean) / std;
+        zScores[`z_${key}`] = Math.max(-Z_CLAMP, Math.min(Z_CLAMP, z));
+        availableCount++;
+      }
+    }
+
+    let composite: number | null = null;
+    if (availableCount > 0) {
+      let weightedSum = 0;
+      let weightSum = 0;
+      for (const key of metrics) {
+        const z = zScores[`z_${key}`];
+        if (z != null) {
+          weightedSum += Z_SCORE_WEIGHTS[key] * z;
+          weightSum += Z_SCORE_WEIGHTS[key];
+        }
+      }
+      composite = Math.round((weightedSum / weightSum) * 100) / 100;
+    }
+
+    return { ...row, ...zScores, composite_score: composite };
+  });
 }
 
 function escapeSQL(value: string): string {

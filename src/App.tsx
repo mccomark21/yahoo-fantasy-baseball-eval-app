@@ -3,6 +3,8 @@ import { loadData } from '@/lib/data-loader';
 import {
   getFilterOptions,
   queryPlayers,
+  filterByVolume,
+  computeZScores,
   type FilterOptions,
   type PlayerRow,
   type TimeWindow,
@@ -70,7 +72,7 @@ export default function App() {
         selectedTeams,
         selectedPositions
       );
-      setPlayers(rows);
+      setPlayers(computeZScores(filterByVolume(rows)));
     } catch (err) {
       console.error('Query failed:', err);
     } finally {

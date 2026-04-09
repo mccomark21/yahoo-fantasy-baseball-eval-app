@@ -90,6 +90,46 @@ const columns: ColumnDef<PlayerRow>[] = [
       return v != null ? v.toFixed(3) : '—';
     },
   },
+  {
+    accessorKey: 'z_xwoba',
+    header: 'xwOBA Z',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return v != null ? v.toFixed(2) : '—';
+    },
+  },
+  {
+    accessorKey: 'z_pull_air_pct',
+    header: 'Pull% Z',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return v != null ? v.toFixed(2) : '—';
+    },
+  },
+  {
+    accessorKey: 'z_bb_k',
+    header: 'BB:K Z',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return v != null ? v.toFixed(2) : '—';
+    },
+  },
+  {
+    accessorKey: 'z_sb_per_pa',
+    header: 'SB/PA Z',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return v != null ? v.toFixed(2) : '—';
+    },
+  },
+  {
+    accessorKey: 'composite_score',
+    header: 'Composite',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return v != null ? v.toFixed(2) : '—';
+    },
+  },
 ];
 
 interface PlayerTableProps {
@@ -98,7 +138,9 @@ interface PlayerTableProps {
 }
 
 export function PlayerTable({ data, isLoading }: PlayerTableProps) {
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: 'composite_score', desc: true },
+  ]);
 
   const table = useReactTable({
     data,
