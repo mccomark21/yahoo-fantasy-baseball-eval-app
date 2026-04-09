@@ -1,6 +1,10 @@
 # Fantasy Baseball Eval
 
+**[Live App](https://mccomark21.github.io/yahoo-fantasy-baseball-eval-app/)**
+
 A browser-based tool for evaluating hitters across Yahoo Fantasy Baseball leagues. It blends league roster data from Yahoo with StatCast advanced metrics sourced via [PyBaseball](https://github.com/jldbc/pybaseball), all processed in-browser using [DuckDB WASM](https://duckdb.org/docs/api/wasm/overview)—no backend required.
+
+![App Screenshot](docs/screenshot.png)
 
 ## Data Sources
 
