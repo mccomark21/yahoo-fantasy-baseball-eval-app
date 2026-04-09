@@ -51,6 +51,14 @@ const columns: ColumnDef<PlayerRow>[] = [
     },
   },
   {
+    accessorKey: 'bbe',
+    header: 'BBE',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return v != null ? v : '—';
+    },
+  },
+  {
     accessorKey: 'xwoba',
     header: 'xwOBA',
     cell: ({ getValue }) => {
