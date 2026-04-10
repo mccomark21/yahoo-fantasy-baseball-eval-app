@@ -134,3 +134,11 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* Collapsible filter grid rows */
+.grid-rows-\[0fr\] {
+  grid-template-rows: 0fr;
+}
+.grid-rows-\[1fr\] {
+  grid-template-rows: 1fr;
+}
