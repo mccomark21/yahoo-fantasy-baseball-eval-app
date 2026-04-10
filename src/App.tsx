@@ -119,7 +119,7 @@ export default function App() {
 
   if (status === 'loading') {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-dvh">
         <div className="text-center">
           <div className="text-lg font-medium">Loading Fantasy Baseball Data</div>
           <div className="text-sm text-muted-foreground mt-2">
@@ -132,7 +132,7 @@ export default function App() {
 
   if (status === 'error') {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-dvh">
         <div className="text-center text-destructive">
           <div className="text-lg font-medium">Failed to load data</div>
           <div className="text-sm mt-2">{error}</div>
@@ -142,9 +142,9 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col h-screen">
-      <header className="px-4 py-3 border-b">
-        <h1 className="text-xl font-semibold">Fantasy Baseball Eval</h1>
+    <div className="flex flex-col h-dvh">
+      <header className="px-3 py-2 md:px-4 md:py-3 border-b">
+        <h1 className="text-lg md:text-xl font-semibold">Fantasy Baseball Eval</h1>
       </header>
       <FilterBar
         filterOptions={filterOptions}
