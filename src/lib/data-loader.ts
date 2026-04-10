@@ -88,12 +88,29 @@ export async function loadData(): Promise<void> {
   try {
     await conn.query(`
       CREATE OR REPLACE TABLE yahoo AS
-      SELECT * FROM read_csv_auto('yahoo.csv')
+      SELECT *,
+        LOWER(
+          REGEXP_REPLACE(
+            REGEXP_REPLACE(player_name, '\s+(Jr\.?|Sr\.?|II|III|IV)$', '', 'i'),
+            '[^a-zA-Z ]', '', 'g'
+          )
+        ) AS norm_name
+      FROM read_csv_auto('yahoo.csv')
     `);
 
     await conn.query(`
       CREATE OR REPLACE TABLE game_logs AS
-      SELECT * FROM read_parquet('game_logs.parquet')
+      SELECT *,
+        LOWER(
+          REGEXP_REPLACE(
+            REGEXP_REPLACE(
+              TRIM(SPLIT_PART(player_name, ',', 2)) || ' ' || TRIM(SPLIT_PART(player_name, ',', 1)),
+              '\s+(Jr\.?|Sr\.?|II|III|IV)$', '', 'i'
+            ),
+            '[^a-zA-Z ]', '', 'g'
+          )
+        ) AS norm_name
+      FROM read_parquet('game_logs.parquet')
     `);
 
     // Verify tables loaded

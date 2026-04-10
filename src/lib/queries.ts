@@ -40,7 +40,10 @@ export function filterByVolume(rows: PlayerRow[]): PlayerRow[] {
   const minBBE = median(bbeValues) * VOLUME_THRESHOLD_PCT;
 
   return rows.filter(
-    (r) => (r.pa ?? 0) >= minPA && (r.bbe ?? 0) >= minBBE
+    (r) =>
+      // Preserve players with no game-log match (NULL stats)
+      (r.pa == null && r.bbe == null) ||
+      ((r.pa ?? 0) >= minPA && (r.bbe ?? 0) >= minBBE)
   );
 }
 
@@ -156,9 +159,7 @@ export async function queryPlayers(
         SUM(g.bbe) AS bbe
       FROM yahoo y
       LEFT JOIN game_logs g
-        ON LOWER(y.player_name) = (
-          TRIM(SPLIT_PART(g.player_name, ',', 2)) || ' ' || TRIM(SPLIT_PART(g.player_name, ',', 1))
-        )
+        ON y.norm_name = g.norm_name
         ${dateFilter}
       ${whereSQL}
       GROUP BY

@@ -78,7 +78,15 @@ export default function App() {
         selectedTeams,
         selectedPositions
       );
-      setPlayers(computeZScores(filterByVolume(rows)));
+      const unmatchedCount = rows.filter((r) => r.pa == null && r.bbe == null).length;
+      console.log(
+        `[query] ${rows.length} players returned, ${unmatchedCount} with no game log match`
+      );
+      const filtered = filterByVolume(rows);
+      console.log(
+        `[filter] ${filtered.length} players after volume filter (${rows.length - filtered.length} removed)`
+      );
+      setPlayers(computeZScores(filtered));
     } catch (err) {
       console.error('Query failed:', err);
     } finally {
