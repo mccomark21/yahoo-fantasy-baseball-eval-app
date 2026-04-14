@@ -28,6 +28,10 @@ import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-
 
 const Z_SCORE_COLUMNS = new Set(['z_xwoba', 'z_pull_air_pct', 'z_bb_k', 'z_sb_per_pa']);
 
+function hasNoStatcastData(row: PlayerRow): boolean {
+  return row.pa == null && row.bbe == null;
+}
+
 function getZScoreBgClass(value: number | null): string {
   if (value == null) return '';
   if (value <= -1.5) return 'bg-red-200 dark:bg-red-900/50';
@@ -41,8 +45,18 @@ const columns: ColumnDef<PlayerRow>[] = [
   {
     accessorKey: 'player_name',
     header: 'Player',
-    cell: ({ getValue }) => (
-      <span className="font-medium">{getValue<string>()}</span>
+    cell: ({ row, getValue }) => (
+      <div className="flex items-center gap-1.5">
+        <span className="font-medium">{getValue<string>()}</span>
+        {hasNoStatcastData(row.original) && (
+          <span
+            className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+            title="No Statcast game-log match found — possible name mismatch between Yahoo and pybaseball data"
+          >
+            No Statcast
+          </span>
+        )}
+      </div>
     ),
   },
   {
@@ -197,6 +211,11 @@ function PlayerCard({ player, expanded, onToggle }: { player: PlayerRow; expande
               {player.mlb_team} · {player.position} · {player.fantasy_team}
               {player.bbe != null && <span> · <span className="tabular-nums">{player.bbe} BBE</span></span>}
             </div>
+            {hasNoStatcastData(player) && (
+              <span className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 mt-1">
+                No Statcast match
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <div className="text-right">

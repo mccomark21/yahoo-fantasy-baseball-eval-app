@@ -73,6 +73,33 @@ async function fetchWithCache(url: string): Promise<Uint8Array> {
   return new Uint8Array(buf);
 }
 
+/**
+ * Manual name-alias map: keys are normalized Yahoo names, values are the
+ * corresponding normalized pybaseball names.  Add entries here whenever a
+ * player's Yahoo display name doesn't match the pybaseball "Last, First"
+ * format after normalization.
+ *
+ * To diagnose new mismatches open the browser console after load — any
+ * Yahoo batters with no game-log match are logged automatically.
+ */
+const NAME_ALIASES: Record<string, string> = {
+  // JJ Wetherholt and Kazuma Okamoto are NOT in the pybaseball enriched
+  // parquet at all (missing from Statcast player ID system).  Aliases
+  // won't help — they need to be added to the pybaseball player_index
+  // upstream.  Keeping this map for future name-format mismatches.
+};
+
+/** Build a SQL CASE expression that remaps norm_name via NAME_ALIASES. */
+function buildAliasCase(inputExpr: string): string {
+  const entries = Object.entries(NAME_ALIASES);
+  if (entries.length === 0) return inputExpr;
+
+  const whens = entries
+    .map(([from, to]) => `WHEN '${from}' THEN '${to}'`)
+    .join(' ');
+  return `CASE ${inputExpr} ${whens} ELSE ${inputExpr} END`;
+}
+
 export async function loadData(): Promise<void> {
   const db = await getDB();
 
@@ -86,15 +113,25 @@ export async function loadData(): Promise<void> {
 
   const conn = await db.connect();
   try {
+    // Normalization pipeline shared by both tables:
+    // 1. STRIP_ACCENTS — transliterate diacritics to ASCII (á→a, ñ→n, etc.)
+    // 2. Remove name suffixes (Jr, Sr, II, III, IV)
+    // 3. Strip remaining non-alpha/non-space characters
+    // 4. Lower-case
+
+    const yahooRawNorm = `LOWER(
+          REGEXP_REPLACE(
+            REGEXP_REPLACE(
+              STRIP_ACCENTS(player_name),
+              '\\s+(Jr\\.?|Sr\\.?|II|III|IV)$', '', 'i'),
+            '[^a-zA-Z ]', '', 'g'
+          )
+        )`;
+
     await conn.query(`
       CREATE OR REPLACE TABLE yahoo AS
       SELECT *,
-        LOWER(
-          REGEXP_REPLACE(
-            REGEXP_REPLACE(player_name, '\s+(Jr\.?|Sr\.?|II|III|IV)$', '', 'i'),
-            '[^a-zA-Z ]', '', 'g'
-          )
-        ) AS norm_name
+        ${buildAliasCase(yahooRawNorm)} AS norm_name
       FROM read_csv_auto('yahoo.csv')
     `);
 
@@ -104,8 +141,10 @@ export async function loadData(): Promise<void> {
         LOWER(
           REGEXP_REPLACE(
             REGEXP_REPLACE(
-              TRIM(SPLIT_PART(player_name, ',', 2)) || ' ' || TRIM(SPLIT_PART(player_name, ',', 1)),
-              '\s+(Jr\.?|Sr\.?|II|III|IV)$', '', 'i'
+              TRIM(SPLIT_PART(STRIP_ACCENTS(player_name), ',', 2))
+              || ' ' ||
+              TRIM(SPLIT_PART(STRIP_ACCENTS(player_name), ',', 1)),
+              '\\s+(Jr\\.?|Sr\\.?|II|III|IV)$', '', 'i'
             ),
             '[^a-zA-Z ]', '', 'g'
           )
@@ -119,6 +158,23 @@ export async function loadData(): Promise<void> {
     console.log(
       `[data] yahoo: ${yahooCount.toArray()[0].cnt} rows, game_logs: ${logsCount.toArray()[0].cnt} rows`
     );
+
+    // Diagnostic: log Yahoo batters with no game-log match
+    const unmatched = await conn.query(`
+      SELECT DISTINCT y.player_name, y.norm_name
+      FROM yahoo y
+      LEFT JOIN game_logs g ON y.norm_name = g.norm_name
+      WHERE g.norm_name IS NULL
+        AND y.primary_position NOT IN ('SP', 'RP')
+      ORDER BY y.player_name
+    `);
+    const rows = unmatched.toArray();
+    if (rows.length > 0) {
+      console.warn(
+        `[data] ${rows.length} Yahoo batter(s) have no Statcast match:`,
+        rows.map((r) => `${r.player_name} (norm: "${r.norm_name}")`),
+      );
+    }
   } finally {
     await conn.close();
   }
