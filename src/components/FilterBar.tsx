@@ -13,6 +13,7 @@ import { MultiSelect } from '@/components/MultiSelect';
 import { useIsMobile } from '@/lib/use-mobile';
 
 interface FilterBarProps {
+  mode: 'hitters' | 'pitchers';
   filterOptions: FilterOptions;
   leagueFantasyTeams: string[];
   selectedLeague: string | null;
@@ -23,11 +24,14 @@ interface FilterBarProps {
   onPositionsChange: (positions: string[]) => void;
   timeWindow: TimeWindow;
   onTimeWindowChange: (tw: TimeWindow) => void;
+  selectedPitcherTeams: string[];
+  onPitcherTeamsChange: (values: string[]) => void;
 }
 
 const TIME_WINDOWS: TimeWindow[] = ['STD', '30D', '14D', '7D'];
 
 export function FilterBar({
+  mode,
   filterOptions,
   leagueFantasyTeams,
   selectedLeague,
@@ -38,6 +42,8 @@ export function FilterBar({
   onPositionsChange,
   timeWindow,
   onTimeWindowChange,
+  selectedPitcherTeams,
+  onPitcherTeamsChange,
 }: FilterBarProps) {
   const isMobile = useIsMobile();
   const [isOpen, setIsOpen] = useState(false);
@@ -45,7 +51,8 @@ export function FilterBar({
   const activeFilterCount =
     (selectedTeams.length > 0 ? 1 : 0) +
     (selectedPositions.length > 0 ? 1 : 0) +
-    (timeWindow !== 'STD' ? 1 : 0);
+    (timeWindow !== 'STD' ? 1 : 0) +
+    (mode === 'pitchers' && selectedPitcherTeams.length > 0 ? 1 : 0);
 
   return (
     <div className="border-b bg-background">
@@ -97,46 +104,65 @@ export function FilterBar({
             </div>
 
             {/* Fantasy Team multi-select */}
-            <div className="flex flex-col gap-1 w-full md:w-auto">
-              <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
-              <MultiSelect
-                options={leagueFantasyTeams}
-                selected={selectedTeams}
-                onChange={onTeamsChange}
-                placeholder="All Teams"
-              />
-            </div>
+            {mode === 'hitters' && (
+              <div className="flex flex-col gap-1 w-full md:w-auto">
+                <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
+                <MultiSelect
+                  options={leagueFantasyTeams}
+                  selected={selectedTeams}
+                  onChange={onTeamsChange}
+                  placeholder="All Teams"
+                />
+              </div>
+            )}
 
             {/* Position multi-select */}
-            <div className="flex flex-col gap-1 w-full md:w-auto">
-              <label className="text-xs font-medium text-muted-foreground">Position</label>
-              <MultiSelect
-                options={filterOptions.positions.filter(p => p !== 'SP' && p !== 'RP')}
-                selected={selectedPositions}
-                onChange={onPositionsChange}
-                placeholder="All Positions"
-              />
-            </div>
+            {mode === 'hitters' && (
+              <div className="flex flex-col gap-1 w-full md:w-auto">
+                <label className="text-xs font-medium text-muted-foreground">Position</label>
+                <MultiSelect
+                  options={filterOptions.positions.filter((p) => p !== 'SP' && p !== 'RP')}
+                  selected={selectedPositions}
+                  onChange={onPositionsChange}
+                  placeholder="All Positions"
+                />
+              </div>
+            )}
+
+            {mode === 'pitchers' && (
+              <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
+                <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
+                <MultiSelect
+                  options={leagueFantasyTeams}
+                  selected={selectedPitcherTeams}
+                  onChange={onPitcherTeamsChange}
+                  placeholder="All Teams"
+                  selectAllLabel="Select All Teams"
+                />
+              </div>
+            )}
 
             {/* Time Window toggle */}
-            <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
-              <label className="text-xs font-medium text-muted-foreground">Time Window</label>
-              <ToggleGroup
-                value={[timeWindow]}
-                onValueChange={(newValue: string[]) => {
-                  if (newValue.length > 0) {
-                    const latest = newValue[newValue.length - 1];
-                    onTimeWindowChange(latest as TimeWindow);
-                  }
-                }}
-              >
-                {TIME_WINDOWS.map((tw) => (
-                  <ToggleGroupItem key={tw} value={tw} className="px-3 text-sm">
-                    {tw}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            </div>
+            {mode === 'hitters' && (
+              <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
+                <label className="text-xs font-medium text-muted-foreground">Time Window</label>
+                <ToggleGroup
+                  value={[timeWindow]}
+                  onValueChange={(newValue: string[]) => {
+                    if (newValue.length > 0) {
+                      const latest = newValue[newValue.length - 1];
+                      onTimeWindowChange(latest as TimeWindow);
+                    }
+                  }}
+                >
+                  {TIME_WINDOWS.map((tw) => (
+                    <ToggleGroupItem key={tw} value={tw} className="px-3 text-sm">
+                      {tw}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </div>
+            )}
           </div>
         </div>
       </div>

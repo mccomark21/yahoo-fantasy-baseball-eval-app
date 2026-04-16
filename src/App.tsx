@@ -4,33 +4,48 @@ import {
   getFilterOptions,
   getFantasyTeamsForLeague,
   queryPlayers,
+  queryPitcherTrends,
   filterByVolume,
   computeZScores,
   type FilterOptions,
   type PlayerRow,
+  type PitcherTrendRow,
   type TimeWindow,
 } from '@/lib/queries';
 import { FilterBar } from '@/components/FilterBar';
 import { PlayerTable } from '@/components/PlayerTable';
+import { PitcherTable } from '@/components/PitcherTable';
+import { fetchLatestPitcherList } from '@/lib/pitcherlist-client';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 type AppStatus = 'loading' | 'ready' | 'error';
 
 export default function App() {
   const [status, setStatus] = useState<AppStatus>('loading');
   const [error, setError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'hitters' | 'pitchers'>('hitters');
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
     leagues: [],
     fantasyTeams: [],
     positions: [],
   });
   const [players, setPlayers] = useState<PlayerRow[]>([]);
+  const [pitchers, setPitchers] = useState<PitcherTrendRow[]>([]);
   const [queryLoading, setQueryLoading] = useState(false);
+  const [pitcherLoading, setPitcherLoading] = useState(false);
+  const [pitcherError, setPitcherError] = useState<string | null>(null);
+  const [pitcherMeta, setPitcherMeta] = useState<{
+    title: string;
+    source_url: string;
+    published_at: string | null;
+  } | null>(null);
   const [leagueFantasyTeams, setLeagueFantasyTeams] = useState<string[]>([]);
 
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
   const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
   const [selectedPositions, setSelectedPositions] = useState<string[]>([]);
   const [timeWindow, setTimeWindow] = useState<TimeWindow>('STD');
+  const [selectedPitcherTeams, setSelectedPitcherTeams] = useState<string[]>([]);
 
   const defaultsSet = useRef(false);
 
@@ -55,6 +70,7 @@ export default function App() {
           );
           if (defaults.length > 0) {
             setSelectedTeams(defaults);
+            setSelectedPitcherTeams(defaults);
           }
         }
         defaultsSet.current = true;
@@ -94,6 +110,29 @@ export default function App() {
     }
   }, [status, timeWindow, selectedLeague, selectedTeams, selectedPositions]);
 
+  const runPitcherQuery = useCallback(async () => {
+    if (status !== 'ready') return;
+
+    setPitcherLoading(true);
+    setPitcherError(null);
+
+    try {
+      const latest = await fetchLatestPitcherList();
+      const joined = await queryPitcherTrends(latest.rows, selectedLeague, selectedPitcherTeams);
+      setPitchers(joined);
+      setPitcherMeta({
+        title: latest.title,
+        source_url: latest.source_url,
+        published_at: latest.published_at,
+      });
+    } catch (err) {
+      setPitcherError(err instanceof Error ? err.message : String(err));
+      setPitchers([]);
+    } finally {
+      setPitcherLoading(false);
+    }
+  }, [status, selectedLeague, selectedPitcherTeams]);
+
   const handleLeagueChange = useCallback(async (league: string | null) => {
     setSelectedLeague(league);
     if (league) {
@@ -105,17 +144,25 @@ export default function App() {
           t.toLowerCase().includes('waiver')
       );
       setSelectedTeams(defaults.length > 0 ? defaults : []);
+      setSelectedPitcherTeams(defaults.length > 0 ? defaults : []);
     } else {
       setLeagueFantasyTeams([]);
       setSelectedTeams([]);
+      setSelectedPitcherTeams([]);
     }
   }, []);
 
   useEffect(() => {
     if (!defaultsSet.current) return;
-    const timer = setTimeout(runQuery, 100);
+    const timer = setTimeout(() => {
+      if (viewMode === 'hitters') {
+        void runQuery();
+        return;
+      }
+      void runPitcherQuery();
+    }, 100);
     return () => clearTimeout(timer);
-  }, [runQuery]);
+  }, [viewMode, runQuery, runPitcherQuery]);
 
   if (status === 'loading') {
     return (
@@ -144,9 +191,23 @@ export default function App() {
   return (
     <div className="flex flex-col h-dvh">
       <header className="px-3 py-2 md:px-4 md:py-3 border-b">
-        <h1 className="text-lg md:text-xl font-semibold">Fantasy Baseball Eval</h1>
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <h1 className="text-lg md:text-xl font-semibold">Fantasy Baseball Eval</h1>
+          <ToggleGroup
+            value={[viewMode]}
+            onValueChange={(next: string[]) => {
+              if (next.length > 0) {
+                setViewMode(next[next.length - 1] as 'hitters' | 'pitchers');
+              }
+            }}
+          >
+            <ToggleGroupItem value="hitters" className="px-3 text-sm">Hitters</ToggleGroupItem>
+            <ToggleGroupItem value="pitchers" className="px-3 text-sm">Starting Pitchers</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
       </header>
       <FilterBar
+        mode={viewMode}
         filterOptions={filterOptions}
         leagueFantasyTeams={leagueFantasyTeams}
         selectedLeague={selectedLeague}
@@ -157,8 +218,37 @@ export default function App() {
         onPositionsChange={setSelectedPositions}
         timeWindow={timeWindow}
         onTimeWindowChange={setTimeWindow}
+        selectedPitcherTeams={selectedPitcherTeams}
+        onPitcherTeamsChange={setSelectedPitcherTeams}
       />
-      <PlayerTable data={players} isLoading={queryLoading} />
+      {viewMode === 'hitters' ? (
+        <PlayerTable data={players} isLoading={queryLoading} />
+      ) : (
+        <>
+          <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
+            {pitcherError ? (
+              <span className="text-destructive">Pitcher List fetch failed: {pitcherError}</span>
+            ) : pitcherMeta ? (
+              <span>
+                {pitcherMeta.title}
+                {pitcherMeta.published_at ? ` · Published ${new Date(pitcherMeta.published_at).toLocaleDateString()}` : ''}
+                {' · '}
+                <a
+                  href={pitcherMeta.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  Source
+                </a>
+              </span>
+            ) : (
+              <span>Loading latest Pitcher List Top 100...</span>
+            )}
+          </div>
+          <PitcherTable data={pitchers} isLoading={pitcherLoading} />
+        </>
+      )}
     </div>
   );
 }

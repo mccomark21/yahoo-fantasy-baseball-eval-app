@@ -9,10 +9,18 @@ interface MultiSelectProps {
   selected: string[];
   onChange: (selected: string[]) => void;
   placeholder: string;
+  selectAllLabel?: string;
 }
 
-export function MultiSelect({ options, selected, onChange, placeholder }: MultiSelectProps) {
+export function MultiSelect({
+  options,
+  selected,
+  onChange,
+  placeholder,
+  selectAllLabel = 'Select All',
+}: MultiSelectProps) {
   const [open, setOpen] = useState(false);
+  const allSelected = options.length > 0 && selected.length === options.length;
 
   const toggle = (value: string) => {
     if (selected.includes(value)) {
@@ -22,6 +30,14 @@ export function MultiSelect({ options, selected, onChange, placeholder }: MultiS
     }
   };
 
+  const toggleAll = () => {
+    if (allSelected) {
+      onChange([]);
+      return;
+    }
+    onChange(options);
+  };
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -29,6 +45,10 @@ export function MultiSelect({ options, selected, onChange, placeholder }: MultiS
       >
         {selected.length === 0 ? (
           <span className="text-muted-foreground">{placeholder}</span>
+        ) : allSelected ? (
+          <Badge variant="secondary" className="text-xs">
+            All
+          </Badge>
         ) : (
           <span className="flex gap-1 flex-wrap">
             {selected.length <= 2 ? (
@@ -48,6 +68,15 @@ export function MultiSelect({ options, selected, onChange, placeholder }: MultiS
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] md:w-[220px] max-h-[300px] overflow-auto p-2" align="start">
         <div className="flex flex-col gap-1">
+          <label
+            className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-accent cursor-pointer text-sm border-b"
+          >
+            <Checkbox
+              checked={allSelected}
+              onCheckedChange={toggleAll}
+            />
+            {selectAllLabel}
+          </label>
           {options.map((opt) => (
             <label
               key={opt}
