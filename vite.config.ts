@@ -7,8 +7,10 @@ import path from 'path'
 
 const PITCHER_LIST_CATEGORY_URL =
   'https://pitcherlist.com/category/fantasy/starting-pitchers/the-list/'
-const RELIEF_LIST_CATEGORY_URL =
+const RELIEF_LIST_CATEGORY_URL_SVHLD =
   'https://pitcherlist.com/category/fantasy/relief-pitchers/reliever-ranks/'
+
+type ReliefScoringMode = 'svhld' | 'saves'
 
 type TrendDirection = 'up' | 'down' | 'flat' | 'new' | 'unknown'
 
@@ -120,12 +122,27 @@ function extractLatestArticleUrl(
 function parseRankingArticle(
   articleUrl: string,
   articleHtml: string,
-  fallbackTitle: string
+  fallbackTitle: string,
+  minExpectedRows = 90,
+  tableHeadingPattern?: RegExp
 ): PitcherListLatestResponse {
   const $ = load(articleHtml)
   const rankByNumber = new Map<number, PitcherListRankRow>()
 
-  $('table tr').each((_i, tr) => {
+  const tables = tableHeadingPattern
+    ? $('table').filter((_i, table) => {
+        const headingText = normalizeWhitespace(
+          $(table).prevAll('h1, h2, h3, h4, p, strong').first().text()
+        )
+        return tableHeadingPattern.test(headingText)
+      })
+    : $('table')
+
+  if (tableHeadingPattern && tables.length === 0) {
+    throw new Error(`Unable to locate ranking table matching ${tableHeadingPattern}`)
+  }
+
+  tables.find('tr').each((_i, tr) => {
     const cells = $(tr)
       .find('td')
       .map((_j, td) => normalizeWhitespace($(td).text()))
@@ -156,7 +173,7 @@ function parseRankingArticle(
   })
 
   const rows = [...rankByNumber.values()].sort((a, b) => a.latest_rank - b.latest_rank)
-  if (rows.length < 90) {
+  if (rows.length < minExpectedRows) {
     throw new Error(`Unexpected parse result: extracted ${rows.length} ranking rows`)
   }
 
@@ -179,8 +196,27 @@ function parsePitcherListArticle(articleUrl: string, articleHtml: string): Pitch
   return parseRankingArticle(articleUrl, articleHtml, 'Pitcher List Top 100')
 }
 
-function parseReliefListArticle(articleUrl: string, articleHtml: string): ReliefListLatestResponse {
-  return parseRankingArticle(articleUrl, articleHtml, 'Pitcher List Reliever Rankings')
+function parseReliefListArticle(
+  articleUrl: string,
+  articleHtml: string,
+  mode: ReliefScoringMode
+): ReliefListLatestResponse {
+  if (mode === 'saves') {
+    return parseRankingArticle(
+      articleUrl,
+      articleHtml,
+      'Pitcher List Reliever Rankings',
+      40,
+      /top\s*50\s*closers\s*for\s*fantasy\s*baseball/i
+    )
+  }
+  return parseRankingArticle(
+    articleUrl,
+    articleHtml,
+    'Pitcher List Reliever Rankings',
+    90,
+    /top\s*100\s*relievers\s*for\s*sv\+hld\s*leagues/i
+  )
 }
 
 async function fetchHtml(url: string): Promise<string> {
@@ -207,7 +243,11 @@ function pitcherListApiPlugin(): Plugin {
 
     try {
       const categoryHtml = await fetchHtml(PITCHER_LIST_CATEGORY_URL)
-      const latestArticleUrl = extractLatestArticleUrl(categoryHtml)
+      const latestArticleUrl = extractLatestArticleUrl(
+        categoryHtml,
+        /\/top-100-starting-pitchers-for-[^/]+\/?$/i,
+        'Unable to find latest starting pitcher rankings article URL'
+      )
       const articleHtml = await fetchHtml(latestArticleUrl)
       const payload = parsePitcherListArticle(latestArticleUrl, articleHtml)
       res.statusCode = 200
@@ -252,14 +292,21 @@ function reliefListApiPlugin(): Plugin {
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
 
     try {
-      const categoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL)
+      const requestUrl = new URL(req.url, 'http://localhost')
+      const mode: ReliefScoringMode =
+        requestUrl.searchParams.get('scoring') === 'saves' ? 'saves' : 'svhld'
+
+      const categoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL_SVHLD)
       const latestArticleUrl = extractLatestArticleUrl(
         categoryHtml,
         /\/fantasy-reliever-rankings-closers-holds-solds-[^/]+\/?$/i,
         'Unable to find latest reliever rankings article URL'
       )
       const articleHtml = await fetchHtml(latestArticleUrl)
-      const payload = parseReliefListArticle(latestArticleUrl, articleHtml)
+      const payload = {
+        ...parseReliefListArticle(latestArticleUrl, articleHtml, mode),
+        scoring_mode: mode,
+      }
       res.statusCode = 200
       res.end(JSON.stringify(payload))
     } catch (error) {

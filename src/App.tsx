@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadData } from '@/lib/data-loader';
 import {
   getFilterOptions,
@@ -18,10 +18,26 @@ import { FilterBar } from '@/components/FilterBar';
 import { PlayerTable } from '@/components/PlayerTable';
 import { PitcherTable } from '@/components/PitcherTable';
 import { ReliefPitcherTable } from '@/components/ReliefPitcherTable';
-import { fetchLatestPitcherList, fetchLatestReliefList } from '@/lib/pitcherlist-client';
+import {
+  fetchLatestPitcherList,
+  fetchLatestReliefList,
+  type ReliefScoringMode,
+} from '@/lib/pitcherlist-client';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 type AppStatus = 'loading' | 'ready' | 'error';
+
+const RELIEF_MODE_BY_LEAGUE_NAME: Array<{ pattern: RegExp; mode: ReliefScoringMode }> = [
+  { pattern: /sega memorial fantasy baseball/i, mode: 'saves' },
+  { pattern: /league(?:s)?\s+of\s+champions/i, mode: 'svhld' },
+];
+
+function getReliefModeForLeague(leagueName: string | null): ReliefScoringMode {
+  if (!leagueName) return 'svhld';
+
+  const match = RELIEF_MODE_BY_LEAGUE_NAME.find((entry) => entry.pattern.test(leagueName));
+  return match?.mode ?? 'svhld';
+}
 
 export default function App() {
   const [status, setStatus] = useState<AppStatus>('loading');
@@ -49,6 +65,7 @@ export default function App() {
     title: string;
     source_url: string;
     published_at: string | null;
+    scoring_mode: ReliefScoringMode;
   } | null>(null);
   const [leagueFantasyTeams, setLeagueFantasyTeams] = useState<string[]>([]);
 
@@ -60,6 +77,10 @@ export default function App() {
   const [selectedReliefTeams, setSelectedReliefTeams] = useState<string[]>([]);
 
   const defaultsSet = useRef(false);
+  const reliefScoringMode = useMemo(
+    () => getReliefModeForLeague(selectedLeague),
+    [selectedLeague]
+  );
 
   useEffect(() => {
     (async () => {
@@ -153,13 +174,14 @@ export default function App() {
     setReliefError(null);
 
     try {
-      const latest = await fetchLatestReliefList();
+      const latest = await fetchLatestReliefList(reliefScoringMode);
       const joined = await queryReliefTrends(latest.rows, selectedLeague, selectedReliefTeams);
       setRelievers(joined);
       setReliefMeta({
         title: latest.title,
         source_url: latest.source_url,
         published_at: latest.published_at,
+        scoring_mode: latest.scoring_mode,
       });
     } catch (err) {
       setReliefError(err instanceof Error ? err.message : String(err));
@@ -167,7 +189,7 @@ export default function App() {
     } finally {
       setReliefLoading(false);
     }
-  }, [status, selectedLeague, selectedReliefTeams]);
+  }, [status, selectedLeague, selectedReliefTeams, reliefScoringMode]);
 
   const handleLeagueChange = useCallback(async (league: string | null) => {
     setSelectedLeague(league);
@@ -245,7 +267,7 @@ export default function App() {
           >
             <ToggleGroupItem value="hitters" className="px-3 text-sm">Hitters</ToggleGroupItem>
             <ToggleGroupItem value="pitchers" className="px-3 text-sm">Starting Pitchers</ToggleGroupItem>
-            <ToggleGroupItem value="relievers" className="px-3 text-sm">Relievers (SV+HLD)</ToggleGroupItem>
+            <ToggleGroupItem value="relievers" className="px-3 text-sm">Relievers</ToggleGroupItem>
           </ToggleGroup>
         </div>
       </header>
@@ -301,6 +323,7 @@ export default function App() {
             ) : reliefMeta ? (
               <span>
                 {reliefMeta.title}
+                {` · ${reliefMeta.scoring_mode === 'saves' ? 'Saves-only' : 'SV+HLD'}`}
                 {reliefMeta.published_at ? ` · Published ${new Date(reliefMeta.published_at).toLocaleDateString()}` : ''}
                 {' · '}
                 <a
