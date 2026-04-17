@@ -29,6 +29,7 @@ export interface PitcherTrendRow {
   movement_raw: string;
   movement_value: number | null;
   trend_direction: TrendDirection;
+  notes: string | null;
   fantasy_team: string | null;
   league_name: string | null;
 }
@@ -340,6 +341,7 @@ export async function queryPitcherTrends(
         movement_raw: rank.movement_raw,
         movement_value: rank.movement_value,
         trend_direction: rank.trend_direction,
+        notes: rank.notes,
         fantasy_team: fantasyTeam,
         league_name: ownership?.league_name ?? null,
       } satisfies PitcherTrendRow;

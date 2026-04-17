@@ -22,6 +22,7 @@ interface PitcherListRankRow {
   movement_raw: string
   movement_value: number | null
   trend_direction: TrendDirection
+  notes: string | null
 }
 
 interface PitcherListLatestResponse {
@@ -130,6 +131,8 @@ function parseRankingArticle(
 ): PitcherListLatestResponse {
   const $ = load(articleHtml)
   const rankByNumber = new Map<number, PitcherListRankRow>()
+  const notesByRank = new Map<number, string>()
+  const notesByName = new Map<string, string>()
 
   const tables = tableHeadingPattern
     ? $('table').filter((_i, table) => {
@@ -170,9 +173,46 @@ function parseRankingArticle(
         movement_raw: movement.movement_raw,
         movement_value: movement.movement_value,
         trend_direction: movement.trend_direction,
+        notes: null,
       })
     }
   })
+
+  $('p').each((_i, p) => {
+    const paragraph = $(p)
+    const strongText = normalizeWhitespace(paragraph.find('strong').first().text())
+
+    if (!/^\d+\./.test(strongText)) {
+      return
+    }
+
+    const rankMatch = strongText.match(/^(\d+)\./)
+    if (!rankMatch) {
+      return
+    }
+
+    const rank = Number.parseInt(rankMatch[1], 10)
+    if (!Number.isFinite(rank) || rank < 1 || rank > 100) {
+      return
+    }
+
+    const noteText = normalizeWhitespace(paragraph.clone().find('strong').remove().end().text())
+    if (!noteText) {
+      return
+    }
+
+    notesByRank.set(rank, noteText)
+
+    const playerLinkText = normalizeWhitespace(paragraph.find('a.player-tag').first().text())
+    const playerName = cleanPlayerName(playerLinkText)
+    if (playerName) {
+      notesByName.set(playerName.toLowerCase(), noteText)
+    }
+  })
+
+  for (const row of rankByNumber.values()) {
+    row.notes = notesByRank.get(row.latest_rank) ?? notesByName.get(row.player_name.toLowerCase()) ?? null
+  }
 
   const rows = [...rankByNumber.values()].sort((a, b) => a.latest_rank - b.latest_rank)
   if (rows.length < minExpectedRows) {
