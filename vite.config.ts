@@ -210,6 +210,22 @@ function parseRankingArticle(
     }
   })
 
+  $('li').each((_i, li) => {
+    const item = $(li)
+    const playerLink = item.find('a.player-tag').first()
+    const playerName = cleanPlayerName(normalizeWhitespace(playerLink.text()))
+    if (!playerName) {
+      return
+    }
+
+    const noteText = normalizeWhitespace(item.text())
+    if (!noteText) {
+      return
+    }
+
+    notesByName.set(playerName.toLowerCase(), noteText)
+  })
+
   for (const row of rankByNumber.values()) {
     row.notes = notesByRank.get(row.latest_rank) ?? notesByName.get(row.player_name.toLowerCase()) ?? null
   }

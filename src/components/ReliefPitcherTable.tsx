@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -40,6 +40,7 @@ export function ReliefPitcherTable({ data, isLoading }: ReliefPitcherTableProps)
   const isMobile = useIsMobile();
   const [sortKey, setSortKey] = useState<ReliefSortKey>('latest_rank');
   const [sortDesc, setSortDesc] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   const sortedData = useMemo(() => {
     const rows = [...data];
@@ -72,6 +73,18 @@ export function ReliefPitcherTable({ data, isLoading }: ReliefPitcherTableProps)
     return sortDesc ? <ArrowDown className="h-3.5 w-3.5" /> : <ArrowUp className="h-3.5 w-3.5" />;
   };
 
+  const toggleExpand = (rowKey: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowKey)) {
+        next.delete(rowKey);
+      } else {
+        next.add(rowKey);
+      }
+      return next;
+    });
+  };
+
   if (isLoading) {
     return <div className="flex items-center justify-center p-12 text-muted-foreground">Loading reliever rankings...</div>;
   }
@@ -80,26 +93,49 @@ export function ReliefPitcherTable({ data, isLoading }: ReliefPitcherTableProps)
     return (
       <div className="flex flex-col flex-1 overflow-auto">
         {sortedData.length > 0 ? (
-          sortedData.map((row) => (
-            <div key={`${row.latest_rank}-${row.player_name}`} className="border-b px-3 py-2.5">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-medium truncate">#{row.latest_rank} {row.player_name}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    {row.mlb_team ?? '—'} · {row.fantasy_team ?? 'Not Found'}
+          sortedData.map((row) => {
+            const rowKey = `${row.latest_rank}-${row.player_name}`;
+            const isExpanded = expandedRows.has(rowKey);
+
+            return (
+              <div key={rowKey} className="border-b px-3 py-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(rowKey)}
+                      className="flex w-full items-center justify-between gap-2 text-left"
+                      aria-expanded={isExpanded}
+                      aria-label={`Toggle note for ${row.player_name}`}
+                    >
+                      <span className="font-medium truncate">#{row.latest_rank} {row.player_name}</span>
+                      {isExpanded ? (
+                        <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      )}
+                    </button>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {row.mlb_team ?? '—'} · {row.fantasy_team ?? 'Not Found'}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${trendPillClass(row.trend_direction)}`}>
+                      {row.movement_raw}
+                    </span>
+                    <div className="text-[11px] mt-1 text-muted-foreground">
+                      {row.fantasy_team ?? 'Not Found'}
+                    </div>
                   </div>
                 </div>
-                <div className="text-right">
-                  <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${trendPillClass(row.trend_direction)}`}>
-                    {row.movement_raw}
-                  </span>
-                  <div className="text-[11px] mt-1 text-muted-foreground">
-                    {row.fantasy_team ?? 'Not Found'}
+                {isExpanded ? (
+                  <div className="mt-2 text-xs leading-5 text-muted-foreground">
+                    {row.notes ?? 'No note available.'}
                   </div>
-                </div>
+                ) : null}
               </div>
-            </div>
-          ))
+            );
+          })
         ) : (
           <div className="p-8 text-center text-muted-foreground">No results.</div>
         )}
@@ -126,6 +162,7 @@ export function ReliefPitcherTable({ data, isLoading }: ReliefPitcherTableProps)
               <TableHead className="cursor-pointer select-none" onClick={() => setSort('fantasy_team')}>
                 <div className="flex items-center gap-1">Fantasy Team {sortIcon('fantasy_team')}</div>
               </TableHead>
+              <TableHead>Notes</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -141,11 +178,14 @@ export function ReliefPitcherTable({ data, isLoading }: ReliefPitcherTableProps)
                     </span>
                   </TableCell>
                   <TableCell>{row.fantasy_team ?? 'Not Found'}</TableCell>
+                  <TableCell className="max-w-md text-xs leading-5 text-muted-foreground whitespace-normal">
+                    {row.notes ?? '—'}
+                  </TableCell>
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">No results.</TableCell>
+                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No results.</TableCell>
               </TableRow>
             )}
           </TableBody>

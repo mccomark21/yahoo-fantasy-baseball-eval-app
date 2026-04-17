@@ -26,6 +26,7 @@ export interface ReliefListRankRow {
   movement_raw: string;
   movement_value: number | null;
   trend_direction: TrendDirection;
+  notes: string | null;
 }
 
 export interface ReliefListLatestResponse {
