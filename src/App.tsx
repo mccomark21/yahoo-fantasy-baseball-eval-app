@@ -5,17 +5,20 @@ import {
   getFantasyTeamsForLeague,
   queryPlayers,
   queryPitcherTrends,
+  queryReliefTrends,
   filterByVolume,
   computeZScores,
   type FilterOptions,
   type PlayerRow,
   type PitcherTrendRow,
+  type ReliefTrendRow,
   type TimeWindow,
 } from '@/lib/queries';
 import { FilterBar } from '@/components/FilterBar';
 import { PlayerTable } from '@/components/PlayerTable';
 import { PitcherTable } from '@/components/PitcherTable';
-import { fetchLatestPitcherList } from '@/lib/pitcherlist-client';
+import { ReliefPitcherTable } from '@/components/ReliefPitcherTable';
+import { fetchLatestPitcherList, fetchLatestReliefList } from '@/lib/pitcherlist-client';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 type AppStatus = 'loading' | 'ready' | 'error';
@@ -23,7 +26,7 @@ type AppStatus = 'loading' | 'ready' | 'error';
 export default function App() {
   const [status, setStatus] = useState<AppStatus>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'hitters' | 'pitchers'>('hitters');
+  const [viewMode, setViewMode] = useState<'hitters' | 'pitchers' | 'relievers'>('hitters');
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
     leagues: [],
     fantasyTeams: [],
@@ -31,10 +34,18 @@ export default function App() {
   });
   const [players, setPlayers] = useState<PlayerRow[]>([]);
   const [pitchers, setPitchers] = useState<PitcherTrendRow[]>([]);
+  const [relievers, setRelievers] = useState<ReliefTrendRow[]>([]);
   const [queryLoading, setQueryLoading] = useState(false);
   const [pitcherLoading, setPitcherLoading] = useState(false);
+  const [reliefLoading, setReliefLoading] = useState(false);
   const [pitcherError, setPitcherError] = useState<string | null>(null);
+  const [reliefError, setReliefError] = useState<string | null>(null);
   const [pitcherMeta, setPitcherMeta] = useState<{
+    title: string;
+    source_url: string;
+    published_at: string | null;
+  } | null>(null);
+  const [reliefMeta, setReliefMeta] = useState<{
     title: string;
     source_url: string;
     published_at: string | null;
@@ -46,6 +57,7 @@ export default function App() {
   const [selectedPositions, setSelectedPositions] = useState<string[]>([]);
   const [timeWindow, setTimeWindow] = useState<TimeWindow>('STD');
   const [selectedPitcherTeams, setSelectedPitcherTeams] = useState<string[]>([]);
+  const [selectedReliefTeams, setSelectedReliefTeams] = useState<string[]>([]);
 
   const defaultsSet = useRef(false);
 
@@ -71,6 +83,7 @@ export default function App() {
           if (defaults.length > 0) {
             setSelectedTeams(defaults);
             setSelectedPitcherTeams(defaults);
+            setSelectedReliefTeams(defaults);
           }
         }
         defaultsSet.current = true;
@@ -133,6 +146,29 @@ export default function App() {
     }
   }, [status, selectedLeague, selectedPitcherTeams]);
 
+  const runReliefQuery = useCallback(async () => {
+    if (status !== 'ready') return;
+
+    setReliefLoading(true);
+    setReliefError(null);
+
+    try {
+      const latest = await fetchLatestReliefList();
+      const joined = await queryReliefTrends(latest.rows, selectedLeague, selectedReliefTeams);
+      setRelievers(joined);
+      setReliefMeta({
+        title: latest.title,
+        source_url: latest.source_url,
+        published_at: latest.published_at,
+      });
+    } catch (err) {
+      setReliefError(err instanceof Error ? err.message : String(err));
+      setRelievers([]);
+    } finally {
+      setReliefLoading(false);
+    }
+  }, [status, selectedLeague, selectedReliefTeams]);
+
   const handleLeagueChange = useCallback(async (league: string | null) => {
     setSelectedLeague(league);
     if (league) {
@@ -145,10 +181,12 @@ export default function App() {
       );
       setSelectedTeams(defaults.length > 0 ? defaults : []);
       setSelectedPitcherTeams(defaults.length > 0 ? defaults : []);
+      setSelectedReliefTeams(defaults.length > 0 ? defaults : []);
     } else {
       setLeagueFantasyTeams([]);
       setSelectedTeams([]);
       setSelectedPitcherTeams([]);
+      setSelectedReliefTeams([]);
     }
   }, []);
 
@@ -159,10 +197,14 @@ export default function App() {
         void runQuery();
         return;
       }
-      void runPitcherQuery();
+      if (viewMode === 'pitchers') {
+        void runPitcherQuery();
+        return;
+      }
+      void runReliefQuery();
     }, 100);
     return () => clearTimeout(timer);
-  }, [viewMode, runQuery, runPitcherQuery]);
+  }, [viewMode, runQuery, runPitcherQuery, runReliefQuery]);
 
   if (status === 'loading') {
     return (
@@ -197,12 +239,13 @@ export default function App() {
             value={[viewMode]}
             onValueChange={(next: string[]) => {
               if (next.length > 0) {
-                setViewMode(next[next.length - 1] as 'hitters' | 'pitchers');
+                setViewMode(next[next.length - 1] as 'hitters' | 'pitchers' | 'relievers');
               }
             }}
           >
             <ToggleGroupItem value="hitters" className="px-3 text-sm">Hitters</ToggleGroupItem>
             <ToggleGroupItem value="pitchers" className="px-3 text-sm">Starting Pitchers</ToggleGroupItem>
+            <ToggleGroupItem value="relievers" className="px-3 text-sm">Relievers (SV+HLD)</ToggleGroupItem>
           </ToggleGroup>
         </div>
       </header>
@@ -220,10 +263,12 @@ export default function App() {
         onTimeWindowChange={setTimeWindow}
         selectedPitcherTeams={selectedPitcherTeams}
         onPitcherTeamsChange={setSelectedPitcherTeams}
+        selectedReliefTeams={selectedReliefTeams}
+        onReliefTeamsChange={setSelectedReliefTeams}
       />
       {viewMode === 'hitters' ? (
         <PlayerTable data={players} isLoading={queryLoading} />
-      ) : (
+      ) : viewMode === 'pitchers' ? (
         <>
           <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
             {pitcherError ? (
@@ -247,6 +292,31 @@ export default function App() {
             )}
           </div>
           <PitcherTable data={pitchers} isLoading={pitcherLoading} />
+        </>
+      ) : (
+        <>
+          <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
+            {reliefError ? (
+              <span className="text-destructive">Reliever rankings fetch failed: {reliefError}</span>
+            ) : reliefMeta ? (
+              <span>
+                {reliefMeta.title}
+                {reliefMeta.published_at ? ` · Published ${new Date(reliefMeta.published_at).toLocaleDateString()}` : ''}
+                {' · '}
+                <a
+                  href={reliefMeta.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  Source
+                </a>
+              </span>
+            ) : (
+              <span>Loading latest reliever rankings...</span>
+            )}
+          </div>
+          <ReliefPitcherTable data={relievers} isLoading={reliefLoading} />
         </>
       )}
     </div>

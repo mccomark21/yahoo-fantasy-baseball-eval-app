@@ -7,6 +7,8 @@ import path from 'path'
 
 const PITCHER_LIST_CATEGORY_URL =
   'https://pitcherlist.com/category/fantasy/starting-pitchers/the-list/'
+const RELIEF_LIST_CATEGORY_URL =
+  'https://pitcherlist.com/category/fantasy/relief-pitchers/reliever-ranks/'
 
 type TrendDirection = 'up' | 'down' | 'flat' | 'new' | 'unknown'
 
@@ -20,6 +22,14 @@ interface PitcherListRankRow {
 }
 
 interface PitcherListLatestResponse {
+  title: string
+  source_url: string
+  published_at: string | null
+  scraped_at: string
+  rows: PitcherListRankRow[]
+}
+
+interface ReliefListLatestResponse {
   title: string
   source_url: string
   published_at: string | null
@@ -79,24 +89,39 @@ function parseMovement(rawValue: string): {
   }
 }
 
-function extractLatestArticleUrl(categoryHtml: string): string {
+function toAbsoluteUrl(href: string): string {
+  if (/^https?:\/\//i.test(href)) {
+    return href
+  }
+  return new URL(href, 'https://pitcherlist.com').toString()
+}
+
+function extractLatestArticleUrl(
+  categoryHtml: string,
+  articlePattern: RegExp,
+  errorMessage: string
+): string {
   const $ = load(categoryHtml)
   const links = $('a[href]')
     .map((_i, el) => $(el).attr('href') ?? '')
     .get()
 
   const candidate = links.find((href) =>
-    /\/top-100-starting-pitchers-for-\d{4}-fantasy-baseball-/i.test(href)
+    articlePattern.test(href)
   )
 
   if (!candidate) {
-    throw new Error('Unable to find latest Top 100 article URL')
+    throw new Error(errorMessage)
   }
 
-  return candidate
+  return toAbsoluteUrl(candidate)
 }
 
-function parsePitcherListArticle(articleUrl: string, articleHtml: string): PitcherListLatestResponse {
+function parseRankingArticle(
+  articleUrl: string,
+  articleHtml: string,
+  fallbackTitle: string
+): PitcherListLatestResponse {
   const $ = load(articleHtml)
   const rankByNumber = new Map<number, PitcherListRankRow>()
 
@@ -135,7 +160,7 @@ function parsePitcherListArticle(articleUrl: string, articleHtml: string): Pitch
     throw new Error(`Unexpected parse result: extracted ${rows.length} ranking rows`)
   }
 
-  const title = normalizeWhitespace($('h1').first().text()) || 'Pitcher List Top 100'
+  const title = normalizeWhitespace($('h1').first().text()) || fallbackTitle
   const publishedAt =
     $('meta[property="article:published_time"]').attr('content') ??
     $('time[datetime]').first().attr('datetime') ??
@@ -148,6 +173,14 @@ function parsePitcherListArticle(articleUrl: string, articleHtml: string): Pitch
     scraped_at: new Date().toISOString(),
     rows,
   }
+}
+
+function parsePitcherListArticle(articleUrl: string, articleHtml: string): PitcherListLatestResponse {
+  return parseRankingArticle(articleUrl, articleHtml, 'Pitcher List Top 100')
+}
+
+function parseReliefListArticle(articleUrl: string, articleHtml: string): ReliefListLatestResponse {
+  return parseRankingArticle(articleUrl, articleHtml, 'Pitcher List Reliever Rankings')
 }
 
 async function fetchHtml(url: string): Promise<string> {
@@ -208,9 +241,59 @@ function pitcherListApiPlugin(): Plugin {
   }
 }
 
+function reliefListApiPlugin(): Plugin {
+  const route = '/api/relief-list/latest'
+
+  const middleware = async (req: { url?: string }, res: { setHeader: (name: string, value: string) => void; statusCode: number; end: (body?: string) => void }) => {
+    if (!req.url || !req.url.startsWith(route)) {
+      return
+    }
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+    try {
+      const categoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL)
+      const latestArticleUrl = extractLatestArticleUrl(
+        categoryHtml,
+        /\/fantasy-reliever-rankings-closers-holds-solds-[^/]+\/?$/i,
+        'Unable to find latest reliever rankings article URL'
+      )
+      const articleHtml = await fetchHtml(latestArticleUrl)
+      const payload = parseReliefListArticle(latestArticleUrl, articleHtml)
+      res.statusCode = 200
+      res.end(JSON.stringify(payload))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown scraper error'
+      res.statusCode = 500
+      res.end(JSON.stringify({
+        error: 'relief_list_scrape_failed',
+        message,
+      }))
+    }
+  }
+
+  return {
+    name: 'relief-list-api',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        middleware(req, res).then(() => {
+          if (!res.writableEnded) next()
+        })
+      })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        middleware(req, res).then(() => {
+          if (!res.writableEnded) next()
+        })
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), pitcherListApiPlugin()],
+  plugins: [react(), tailwindcss(), pitcherListApiPlugin(), reliefListApiPlugin()],
   base: '/yahoo-fantasy-baseball-eval-app/',
   resolve: {
     alias: {

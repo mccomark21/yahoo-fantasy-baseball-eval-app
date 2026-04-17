@@ -1,5 +1,5 @@
 import { getDB } from './duckdb';
-import type { PitcherListRankRow, TrendDirection } from './pitcherlist-client';
+import type { PitcherListRankRow, ReliefListRankRow, TrendDirection } from './pitcherlist-client';
 
 export type TimeWindow = 'STD' | '7D' | '14D' | '30D';
 
@@ -23,6 +23,17 @@ export interface PlayerRow {
 }
 
 export interface PitcherTrendRow {
+  latest_rank: number;
+  player_name: string;
+  mlb_team: string | null;
+  movement_raw: string;
+  movement_value: number | null;
+  trend_direction: TrendDirection;
+  fantasy_team: string | null;
+  league_name: string | null;
+}
+
+export interface ReliefTrendRow {
   latest_rank: number;
   player_name: string;
   mlb_team: string | null;
@@ -332,6 +343,64 @@ export async function queryPitcherTrends(
         fantasy_team: fantasyTeam,
         league_name: ownership?.league_name ?? null,
       } satisfies PitcherTrendRow;
+    });
+
+    const filtered =
+      selectedFantasyTeams.length > 0
+        ? joined.filter((r) => r.fantasy_team != null && selectedFantasyTeams.includes(r.fantasy_team))
+        : joined;
+
+    return filtered.sort((a, b) => a.latest_rank - b.latest_rank);
+  } finally {
+    await conn.close();
+  }
+}
+
+export async function queryReliefTrends(
+  ranks: ReliefListRankRow[],
+  selectedLeague: string | null,
+  selectedFantasyTeams: string[]
+): Promise<ReliefTrendRow[]> {
+  const db = await getDB();
+  const conn = await db.connect();
+
+  try {
+    let sql = 'SELECT player_name, league_name, fantasy_team, norm_name FROM yahoo';
+    if (selectedLeague) {
+      sql += ` WHERE league_name = '${escapeSQL(selectedLeague)}'`;
+    }
+
+    const result = await conn.query(sql);
+    const ownershipRows = result.toArray();
+    const ownerByNormName = new Map<
+      string,
+      { fantasy_team: string | null; league_name: string | null }
+    >();
+
+    for (const row of ownershipRows) {
+      const normName = (row.norm_name as string | null) ?? null;
+      if (!normName || ownerByNormName.has(normName)) continue;
+      ownerByNormName.set(normName, {
+        fantasy_team: (row.fantasy_team as string | null) ?? null,
+        league_name: (row.league_name as string | null) ?? null,
+      });
+    }
+
+    const joined = ranks.map((rank) => {
+      const normName = normalizePlayerName(rank.player_name);
+      const ownership = ownerByNormName.get(normName);
+      const fantasyTeam = ownership?.fantasy_team ?? null;
+
+      return {
+        latest_rank: rank.latest_rank,
+        player_name: rank.player_name,
+        mlb_team: rank.mlb_team,
+        movement_raw: rank.movement_raw,
+        movement_value: rank.movement_value,
+        trend_direction: rank.trend_direction,
+        fantasy_team: fantasyTeam,
+        league_name: ownership?.league_name ?? null,
+      } satisfies ReliefTrendRow;
     });
 
     const filtered =

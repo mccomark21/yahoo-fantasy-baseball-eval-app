@@ -13,7 +13,7 @@ import { MultiSelect } from '@/components/MultiSelect';
 import { useIsMobile } from '@/lib/use-mobile';
 
 interface FilterBarProps {
-  mode: 'hitters' | 'pitchers';
+  mode: 'hitters' | 'pitchers' | 'relievers';
   filterOptions: FilterOptions;
   leagueFantasyTeams: string[];
   selectedLeague: string | null;
@@ -26,6 +26,8 @@ interface FilterBarProps {
   onTimeWindowChange: (tw: TimeWindow) => void;
   selectedPitcherTeams: string[];
   onPitcherTeamsChange: (values: string[]) => void;
+  selectedReliefTeams: string[];
+  onReliefTeamsChange: (values: string[]) => void;
 }
 
 const TIME_WINDOWS: TimeWindow[] = ['STD', '30D', '14D', '7D'];
@@ -44,6 +46,8 @@ export function FilterBar({
   onTimeWindowChange,
   selectedPitcherTeams,
   onPitcherTeamsChange,
+  selectedReliefTeams,
+  onReliefTeamsChange,
 }: FilterBarProps) {
   const isMobile = useIsMobile();
   const [isOpen, setIsOpen] = useState(false);
@@ -52,7 +56,10 @@ export function FilterBar({
     (selectedTeams.length > 0 ? 1 : 0) +
     (selectedPositions.length > 0 ? 1 : 0) +
     (timeWindow !== 'STD' ? 1 : 0) +
-    (mode === 'pitchers' && selectedPitcherTeams.length > 0 ? 1 : 0);
+    ((mode === 'pitchers' && selectedPitcherTeams.length > 0) ||
+    (mode === 'relievers' && selectedReliefTeams.length > 0)
+      ? 1
+      : 0);
 
   return (
     <div className="border-b bg-background">
@@ -136,6 +143,19 @@ export function FilterBar({
                   options={leagueFantasyTeams}
                   selected={selectedPitcherTeams}
                   onChange={onPitcherTeamsChange}
+                  placeholder="All Teams"
+                  selectAllLabel="Select All Teams"
+                />
+              </div>
+            )}
+
+            {mode === 'relievers' && (
+              <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
+                <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
+                <MultiSelect
+                  options={leagueFantasyTeams}
+                  selected={selectedReliefTeams}
+                  onChange={onReliefTeamsChange}
                   placeholder="All Teams"
                   selectAllLabel="Select All Teams"
                 />
