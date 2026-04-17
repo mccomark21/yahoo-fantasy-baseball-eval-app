@@ -39,7 +39,7 @@ export interface ReliefListLatestResponse {
 function formatPitcherListFetchError(error: unknown): Error {
   if (error instanceof TypeError) {
     return new Error(
-      'Unable to reach the local app server. Confirm Vite is running and reload the page.'
+      'Unable to reach the rankings source. Confirm the app is deployed correctly and reload the page.'
     );
   }
 
@@ -50,11 +50,32 @@ function formatPitcherListFetchError(error: unknown): Error {
   return new Error(String(error));
 }
 
+function buildAppUrl(path: string): string {
+  const base = import.meta.env.BASE_URL || '/';
+  const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+  const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
+  return `${normalizedBase}${normalizedPath}`;
+}
+
+function getPitcherListEndpoint(): string {
+  if (import.meta.env.DEV) {
+    return '/api/pitcher-list/latest';
+  }
+  return buildAppUrl('api/pitcher-list/latest.json');
+}
+
+function getReliefListEndpoint(scoringMode: ReliefScoringMode): string {
+  if (import.meta.env.DEV) {
+    return `/api/relief-list/latest?scoring=${scoringMode}`;
+  }
+  return buildAppUrl(`api/relief-list/latest.${scoringMode}.json`);
+}
+
 export async function fetchLatestPitcherList(): Promise<PitcherListLatestResponse> {
   let response: Response;
 
   try {
-    response = await fetch('/api/pitcher-list/latest');
+    response = await fetch(getPitcherListEndpoint());
   } catch (error) {
     throw formatPitcherListFetchError(error);
   }
@@ -77,7 +98,7 @@ export async function fetchLatestReliefList(
   let response: Response;
 
   try {
-    response = await fetch(`/api/relief-list/latest?scoring=${scoringMode}`);
+    response = await fetch(getReliefListEndpoint(scoringMode));
   } catch (error) {
     throw formatPitcherListFetchError(error);
   }

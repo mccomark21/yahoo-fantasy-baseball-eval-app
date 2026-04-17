@@ -79,6 +79,8 @@ The app is configured for **GitHub Pages**. The base path is set in [`vite.confi
 base: '/yahoo-fantasy-baseball-eval-app/'
 ```
 
+Because GitHub Pages is static hosting, the Pitcher List endpoints are generated at build time into static JSON files under `dist/api/*` by a Vite build plugin. In local development, the app still uses Vite middleware routes (`/api/pitcher-list/latest` and `/api/relief-list/latest`) for live scraping.
+
 Push the built output (from `npm run build`) to the `gh-pages` branch or configure GitHub Actions to deploy automatically.
 
 ## License

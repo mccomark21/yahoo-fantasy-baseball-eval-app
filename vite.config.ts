@@ -3,6 +3,7 @@ import type { Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { load } from 'cheerio'
+import { mkdir, writeFile } from 'fs/promises'
 import path from 'path'
 
 const PITCHER_LIST_CATEGORY_URL =
@@ -36,6 +37,7 @@ interface ReliefListLatestResponse {
   source_url: string
   published_at: string | null
   scraped_at: string
+  scoring_mode: ReliefScoringMode
   rows: PitcherListRankRow[]
 }
 
@@ -202,21 +204,27 @@ function parseReliefListArticle(
   mode: ReliefScoringMode
 ): ReliefListLatestResponse {
   if (mode === 'saves') {
-    return parseRankingArticle(
+    return {
+      ...parseRankingArticle(
       articleUrl,
       articleHtml,
       'Pitcher List Reliever Rankings',
       40,
       /top\s*50\s*closers\s*for\s*fantasy\s*baseball/i
-    )
+      ),
+      scoring_mode: 'saves',
+    }
   }
-  return parseRankingArticle(
-    articleUrl,
-    articleHtml,
-    'Pitcher List Reliever Rankings',
-    90,
-    /top\s*100\s*relievers\s*for\s*sv\+hld\s*leagues/i
-  )
+  return {
+    ...parseRankingArticle(
+      articleUrl,
+      articleHtml,
+      'Pitcher List Reliever Rankings',
+      90,
+      /top\s*100\s*relievers\s*for\s*sv\+hld\s*leagues/i
+    ),
+    scoring_mode: 'svhld',
+  }
 }
 
 async function fetchHtml(url: string): Promise<string> {
@@ -303,10 +311,7 @@ function reliefListApiPlugin(): Plugin {
         'Unable to find latest reliever rankings article URL'
       )
       const articleHtml = await fetchHtml(latestArticleUrl)
-      const payload = {
-        ...parseReliefListArticle(latestArticleUrl, articleHtml, mode),
-        scoring_mode: mode,
-      }
+      const payload = parseReliefListArticle(latestArticleUrl, articleHtml, mode)
       res.statusCode = 200
       res.end(JSON.stringify(payload))
     } catch (error) {
@@ -338,9 +343,58 @@ function reliefListApiPlugin(): Plugin {
   }
 }
 
+function staticApiSnapshotPlugin(): Plugin {
+  return {
+    name: 'static-api-snapshot',
+    apply: 'build',
+    async closeBundle() {
+      const outputDir = path.resolve(process.cwd(), 'dist', 'api')
+      await mkdir(path.join(outputDir, 'pitcher-list'), { recursive: true })
+      await mkdir(path.join(outputDir, 'relief-list'), { recursive: true })
+
+      const pitcherCategoryHtml = await fetchHtml(PITCHER_LIST_CATEGORY_URL)
+      const pitcherArticleUrl = extractLatestArticleUrl(
+        pitcherCategoryHtml,
+        /\/top-100-starting-pitchers-for-[^/]+\/?$/i,
+        'Unable to find latest starting pitcher rankings article URL'
+      )
+      const pitcherArticleHtml = await fetchHtml(pitcherArticleUrl)
+      const pitcherPayload = parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
+
+      await writeFile(
+        path.join(outputDir, 'pitcher-list', 'latest.json'),
+        JSON.stringify(pitcherPayload),
+        'utf8'
+      )
+
+      const reliefCategoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL_SVHLD)
+      const reliefArticleUrl = extractLatestArticleUrl(
+        reliefCategoryHtml,
+        /\/fantasy-reliever-rankings-closers-holds-solds-[^/]+\/?$/i,
+        'Unable to find latest reliever rankings article URL'
+      )
+      const reliefArticleHtml = await fetchHtml(reliefArticleUrl)
+
+      const svhldPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld')
+      const savesPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves')
+
+      await writeFile(
+        path.join(outputDir, 'relief-list', 'latest.svhld.json'),
+        JSON.stringify(svhldPayload),
+        'utf8'
+      )
+      await writeFile(
+        path.join(outputDir, 'relief-list', 'latest.saves.json'),
+        JSON.stringify(savesPayload),
+        'utf8'
+      )
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), pitcherListApiPlugin(), reliefListApiPlugin()],
+  plugins: [react(), tailwindcss(), pitcherListApiPlugin(), reliefListApiPlugin(), staticApiSnapshotPlugin()],
   base: '/yahoo-fantasy-baseball-eval-app/',
   resolve: {
     alias: {
