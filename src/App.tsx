@@ -24,8 +24,13 @@ import {
   type ReliefScoringMode,
 } from '@/lib/pitcherlist-client';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Toggle } from '@/components/ui/toggle';
+import { Moon, Sun } from 'lucide-react';
 
 type AppStatus = 'loading' | 'ready' | 'error';
+type ThemeMode = 'light' | 'dark';
+
+const THEME_STORAGE_KEY = 'theme';
 
 const RELIEF_MODE_BY_LEAGUE_NAME: Array<{ pattern: RegExp; mode: ReliefScoringMode }> = [
   { pattern: /sega memorial fantasy baseball/i, mode: 'saves' },
@@ -40,6 +45,18 @@ function getReliefModeForLeague(leagueName: string | null): ReliefScoringMode {
 }
 
 export default function App() {
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof window === 'undefined') {
+      return 'light';
+    }
+
+    const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (savedTheme === 'light' || savedTheme === 'dark') {
+      return savedTheme;
+    }
+
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
   const [status, setStatus] = useState<AppStatus>('loading');
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'hitters' | 'pitchers' | 'relievers'>('hitters');
@@ -81,6 +98,12 @@ export default function App() {
     () => getReliefModeForLeague(selectedLeague),
     [selectedLeague]
   );
+
+  useEffect(() => {
+    const isDark = theme === 'dark';
+    document.documentElement.classList.toggle('dark', isDark);
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     (async () => {
@@ -232,7 +255,7 @@ export default function App() {
     return (
       <div className="flex items-center justify-center h-dvh">
         <div className="text-center">
-          <div className="text-lg font-medium">Loading Fantasy Baseball Data</div>
+          <div className="text-lg font-medium">Loading Fantasy Baseball Research Data</div>
           <div className="text-sm text-muted-foreground mt-2">
             Initializing DuckDB and fetching data...
           </div>
@@ -255,8 +278,20 @@ export default function App() {
   return (
     <div className="flex flex-col h-dvh">
       <header className="px-3 py-2 md:px-4 md:py-3 border-b">
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <h1 className="text-lg md:text-xl font-semibold">Fantasy Baseball Eval</h1>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <h1 className="text-lg md:text-xl font-semibold tracking-tight">Fantasy Baseball Research</h1>
+            <Toggle
+              variant="outline"
+              size="sm"
+              aria-label="Toggle dark mode"
+              pressed={theme === 'dark'}
+              onPressedChange={(pressed) => setTheme(pressed ? 'dark' : 'light')}
+            >
+              {theme === 'dark' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+              <span className="hidden sm:inline">{theme === 'dark' ? 'Dark' : 'Light'}</span>
+            </Toggle>
+          </div>
           <ToggleGroup
             value={[viewMode]}
             onValueChange={(next: string[]) => {
@@ -264,10 +299,26 @@ export default function App() {
                 setViewMode(next[next.length - 1] as 'hitters' | 'pitchers' | 'relievers');
               }
             }}
+            className="self-start rounded-lg bg-teal-950 p-0.5"
           >
-            <ToggleGroupItem value="hitters" className="px-3 text-sm">Hitters</ToggleGroupItem>
-            <ToggleGroupItem value="pitchers" className="px-3 text-sm">Starting Pitchers</ToggleGroupItem>
-            <ToggleGroupItem value="relievers" className="px-3 text-sm">Relievers</ToggleGroupItem>
+            <ToggleGroupItem
+              value="hitters"
+              className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
+            >
+              Hitters
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="pitchers"
+              className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
+            >
+              Starts
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="relievers"
+              className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
+            >
+              Relievers
+            </ToggleGroupItem>
           </ToggleGroup>
         </div>
       </header>

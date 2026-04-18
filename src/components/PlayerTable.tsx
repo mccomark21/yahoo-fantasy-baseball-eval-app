@@ -27,6 +27,19 @@ import { useIsMobile } from '@/lib/use-mobile';
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 
 const Z_SCORE_COLUMNS = new Set(['z_xwoba', 'z_pull_air_pct', 'z_bb_k', 'z_sb_per_pa']);
+const NUMERIC_COLUMNS = new Set([
+  'pa',
+  'bbe',
+  'xwoba',
+  'pull_air_pct',
+  'bb_k',
+  'sb_per_pa',
+  'z_xwoba',
+  'z_pull_air_pct',
+  'z_bb_k',
+  'z_sb_per_pa',
+  'composite_score',
+]);
 
 function hasNoStatcastData(row: PlayerRow): boolean {
   return row.pa == null && row.bbe == null;
@@ -188,10 +201,10 @@ function fmt(v: number | null, digits: number, suffix = ''): string {
 function ZBadge({ label, value }: { label: string; value: number | null }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs tabular-nums ${getZScoreBgClass(value)}`}
+      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs ${getZScoreBgClass(value)}`}
     >
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value != null ? value.toFixed(2) : '—'}</span>
+      <span className="font-medium font-mono tabular-nums">{value != null ? value.toFixed(2) : '—'}</span>
     </span>
   );
 }
@@ -209,7 +222,7 @@ function PlayerCard({ player, expanded, onToggle }: { player: PlayerRow; expande
             <div className="font-medium truncate">{player.player_name}</div>
             <div className="text-xs text-muted-foreground mt-0.5">
               {player.mlb_team} · {player.position} · {player.fantasy_team}
-              {player.bbe != null && <span> · <span className="tabular-nums">{player.bbe} BBE</span></span>}
+              {player.bbe != null && <span> · <span className="font-mono tabular-nums">{player.bbe} BBE</span></span>}
             </div>
             {hasNoStatcastData(player) && (
               <span className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 mt-1">
@@ -219,7 +232,7 @@ function PlayerCard({ player, expanded, onToggle }: { player: PlayerRow; expande
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <div className="text-right">
-              <div className="text-sm font-semibold tabular-nums">
+              <div className="text-sm font-semibold font-mono tabular-nums">
                 {fmt(player.composite_score, 2)}
               </div>
               <div className="text-[10px] text-muted-foreground">Composite</div>
@@ -242,27 +255,27 @@ function PlayerCard({ player, expanded, onToggle }: { player: PlayerRow; expande
         <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 mt-2.5 pt-2.5 border-t text-xs">
           <div>
             <span className="text-muted-foreground">PA</span>{' '}
-            <span className="font-medium tabular-nums">{player.pa ?? '—'}</span>
+            <span className="font-medium font-mono tabular-nums">{player.pa ?? '—'}</span>
           </div>
           <div>
             <span className="text-muted-foreground">BBE</span>{' '}
-            <span className="font-medium tabular-nums">{player.bbe ?? '—'}</span>
+            <span className="font-medium font-mono tabular-nums">{player.bbe ?? '—'}</span>
           </div>
           <div>
             <span className="text-muted-foreground">xwOBA</span>{' '}
-            <span className="font-medium tabular-nums">{fmt(player.xwoba, 3)}</span>
+            <span className="font-medium font-mono tabular-nums">{fmt(player.xwoba, 3)}</span>
           </div>
           <div>
             <span className="text-muted-foreground">Pull Air%</span>{' '}
-            <span className="font-medium tabular-nums">{fmt(player.pull_air_pct, 1, '%')}</span>
+            <span className="font-medium font-mono tabular-nums">{fmt(player.pull_air_pct, 1, '%')}</span>
           </div>
           <div>
             <span className="text-muted-foreground">BB:K</span>{' '}
-            <span className="font-medium tabular-nums">{fmt(player.bb_k, 2)}</span>
+            <span className="font-medium font-mono tabular-nums">{fmt(player.bb_k, 2)}</span>
           </div>
           <div>
             <span className="text-muted-foreground">SB/PA</span>{' '}
-            <span className="font-medium tabular-nums">{fmt(player.sb_per_pa, 3)}</span>
+            <span className="font-medium font-mono tabular-nums">{fmt(player.sb_per_pa, 3)}</span>
           </div>
         </div>
       )}
@@ -277,6 +290,8 @@ export function PlayerTable({ data, isLoading }: PlayerTableProps) {
   ]);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
+  // TanStack table returns functions that the React compiler warns about by design.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data,
     columns,
@@ -315,7 +330,10 @@ export function PlayerTable({ data, isLoading }: PlayerTableProps) {
           <span className="text-xs text-muted-foreground shrink-0">Sort by</span>
           <Select
             value={currentSortId}
-            onValueChange={(v) => setSorting([{ id: v, desc: v !== 'player_name' }])}
+            onValueChange={(v) => {
+              if (!v) return;
+              setSorting([{ id: v, desc: v !== 'player_name' }]);
+            }}
           >
             <SelectTrigger className="h-8 text-xs flex-1">
               <SelectValue />
@@ -405,7 +423,7 @@ export function PlayerTable({ data, isLoading }: PlayerTableProps) {
                   {row.getVisibleCells().map((cell) => (
                     <TableCell
                       key={cell.id}
-                      className={`whitespace-nowrap ${Z_SCORE_COLUMNS.has(cell.column.id) ? getZScoreBgClass(cell.getValue<number | null>()) : ''}`}
+                      className={`whitespace-nowrap ${NUMERIC_COLUMNS.has(cell.column.id) ? 'font-mono tabular-nums' : ''} ${Z_SCORE_COLUMNS.has(cell.column.id) ? getZScoreBgClass(cell.getValue<number | null>()) : ''}`}
                     >
                       {flexRender(
                         cell.column.columnDef.cell,

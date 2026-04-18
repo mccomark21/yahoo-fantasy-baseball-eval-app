@@ -4,7 +4,16 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Fantasy Baseball Eval</title>
+    <script>
+      (() => {
+        const key = 'theme';
+        const savedTheme = window.localStorage.getItem(key);
+        const preferredDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const isDark = savedTheme === 'dark' || (savedTheme !== 'light' && preferredDark);
+        document.documentElement.classList.toggle('dark', isDark);
+      })();
+    </script>
+    <title>Fantasy Baseball Research</title>
   </head>
   <body>
     <div id="root"></div>

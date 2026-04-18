@@ -108,7 +108,7 @@ export function PitcherTable({ data, isLoading }: PitcherTableProps) {
                       aria-expanded={isExpanded}
                       aria-label={`Toggle note for ${row.player_name}`}
                     >
-                      <span className="font-medium truncate">#{row.latest_rank} {row.player_name}</span>
+                      <span className="font-medium truncate"><span className="font-mono tabular-nums">#{row.latest_rank}</span> {row.player_name}</span>
                       {isExpanded ? (
                         <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
                       ) : (
@@ -120,7 +120,7 @@ export function PitcherTable({ data, isLoading }: PitcherTableProps) {
                     </div>
                   </div>
                   <div className="text-right">
-                    <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${trendPillClass(row.trend_direction)}`}>
+                    <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium font-mono tabular-nums ${trendPillClass(row.trend_direction)}`}>
                       {row.movement_raw}
                     </span>
                     <div className="text-[11px] mt-1 text-muted-foreground">
@@ -169,11 +169,11 @@ export function PitcherTable({ data, isLoading }: PitcherTableProps) {
             {sortedData.length > 0 ? (
               sortedData.map((row) => (
                 <TableRow key={`${row.latest_rank}-${row.player_name}`}>
-                  <TableCell className="tabular-nums">{row.latest_rank}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{row.latest_rank}</TableCell>
                   <TableCell className="font-medium">{row.player_name}</TableCell>
                   <TableCell>{row.mlb_team ?? '—'}</TableCell>
                   <TableCell>
-                    <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${trendPillClass(row.trend_direction)}`}>
+                    <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium font-mono tabular-nums ${trendPillClass(row.trend_direction)}`}>
                       {row.movement_raw}
                     </span>
                   </TableCell>
