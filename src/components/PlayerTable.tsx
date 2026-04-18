@@ -26,18 +26,18 @@ import type { PlayerRow } from '@/lib/queries';
 import { useIsMobile } from '@/lib/use-mobile';
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 
-const Z_SCORE_COLUMNS = new Set(['z_xwoba', 'z_pull_air_pct', 'z_bb_k', 'z_sb_per_pa']);
+const Z_SCORE_COLUMNS = new Set(['z_xwoba', 'z_pull_air_pct', 'z_bb_k', 'z_sb']);
 const NUMERIC_COLUMNS = new Set([
   'pa',
   'bbe',
   'xwoba',
   'pull_air_pct',
   'bb_k',
-  'sb_per_pa',
+  'sb',
   'z_xwoba',
   'z_pull_air_pct',
   'z_bb_k',
-  'z_sb_per_pa',
+  'z_sb',
   'composite_score',
 ]);
 
@@ -125,11 +125,11 @@ const columns: ColumnDef<PlayerRow>[] = [
     },
   },
   {
-    accessorKey: 'sb_per_pa',
-    header: 'SB/PA',
+    accessorKey: 'sb',
+    header: 'SB',
     cell: ({ getValue }) => {
       const v = getValue<number | null>();
-      return v != null ? v.toFixed(3) : '—';
+      return v != null ? v.toFixed(0) : '—';
     },
   },
   {
@@ -157,8 +157,8 @@ const columns: ColumnDef<PlayerRow>[] = [
     },
   },
   {
-    accessorKey: 'z_sb_per_pa',
-    header: 'SB/PA Z',
+    accessorKey: 'z_sb',
+    header: 'SB Z',
     cell: ({ getValue }) => {
       const v = getValue<number | null>();
       return v != null ? v.toFixed(2) : '—';
@@ -184,11 +184,11 @@ const SORT_OPTIONS = [
   { value: 'z_xwoba', label: 'xwOBA Z' },
   { value: 'z_pull_air_pct', label: 'Pull% Z' },
   { value: 'z_bb_k', label: 'BB:K Z' },
-  { value: 'z_sb_per_pa', label: 'SB/PA Z' },
+  { value: 'z_sb', label: 'SB Z' },
   { value: 'xwoba', label: 'xwOBA' },
   { value: 'pull_air_pct', label: 'Pull Air%' },
   { value: 'bb_k', label: 'BB:K' },
-  { value: 'sb_per_pa', label: 'SB/PA' },
+  { value: 'sb', label: 'SB' },
   { value: 'pa', label: 'PA' },
   { value: 'player_name', label: 'Player' },
 ] as const;
@@ -248,7 +248,7 @@ function PlayerCard({ player, expanded, onToggle }: { player: PlayerRow; expande
           <ZBadge label="xwOBA" value={player.z_xwoba} />
           <ZBadge label="Pull%" value={player.z_pull_air_pct} />
           <ZBadge label="BB:K" value={player.z_bb_k} />
-          <ZBadge label="SB" value={player.z_sb_per_pa} />
+          <ZBadge label="SB" value={player.z_sb} />
         </div>
       </button>
       {expanded && (
@@ -274,8 +274,8 @@ function PlayerCard({ player, expanded, onToggle }: { player: PlayerRow; expande
             <span className="font-medium font-mono tabular-nums">{fmt(player.bb_k, 2)}</span>
           </div>
           <div>
-            <span className="text-muted-foreground">SB/PA</span>{' '}
-            <span className="font-medium font-mono tabular-nums">{fmt(player.sb_per_pa, 3)}</span>
+            <span className="text-muted-foreground">SB</span>{' '}
+            <span className="font-medium font-mono tabular-nums">{fmt(player.sb, 0)}</span>
           </div>
         </div>
       )}

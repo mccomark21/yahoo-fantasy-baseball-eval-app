@@ -34,7 +34,7 @@ Both files are fetched at startup and cached in **IndexedDB** with a 4-hour TTL 
 | **xwOBA** | Expected Weighted On-Base Average (StatCast) |
 | **Pull Air%** | Percentage of batted balls pulled or hit in the air |
 | **BB:K** | Walk-to-Strikeout ratio |
-| **SB/PA** | Stolen Bases per Plate Appearance |
+| **SB** | Stolen Bases |
 
 Each metric also has a **z-score** column that normalizes the stat relative to the current filtered group. A **Composite Score** combines the z-scores with fixed weights:
 
@@ -43,7 +43,7 @@ Each metric also has a **z-score** column that normalizes the stat relative to t
 | xwOBA | 40% |
 | BB:K | 30% |
 | Pull Air% | 20% |
-| SB/PA | 10% |
+| SB | 10% |
 
 Z-scores are clamped to ±2.5 to prevent outliers from dominating the composite. The table sorts by composite score (descending) by default.
 

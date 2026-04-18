@@ -12,13 +12,13 @@ export interface PlayerRow {
   xwoba: number | null;
   pull_air_pct: number | null;
   bb_k: number | null;
-  sb_per_pa: number | null;
+  sb: number | null;
   pa: number | null;
   bbe: number | null;
   z_xwoba: number | null;
   z_pull_air_pct: number | null;
   z_bb_k: number | null;
-  z_sb_per_pa: number | null;
+  z_sb: number | null;
   composite_score: number | null;
 }
 
@@ -177,9 +177,7 @@ export async function queryPlayers(
         CASE WHEN SUM(g.k) > 0
           THEN ROUND(SUM(g.bb)::DOUBLE / SUM(g.k), 2)
           ELSE NULL END AS bb_k,
-        CASE WHEN SUM(g.pa) > 0
-          THEN ROUND(SUM(g.sb)::DOUBLE / SUM(g.pa), 3)
-          ELSE NULL END AS sb_per_pa,
+        SUM(g.sb) AS sb,
         SUM(g.pa) AS pa,
         SUM(g.bbe) AS bbe
       FROM yahoo y
@@ -206,13 +204,13 @@ export async function queryPlayers(
       xwoba: toNum(row.xwoba),
       pull_air_pct: toNum(row.pull_air_pct),
       bb_k: toNum(row.bb_k),
-      sb_per_pa: toNum(row.sb_per_pa),
+      sb: toNum(row.sb),
       pa: toNum(row.pa),
       bbe: toNum(row.bbe),
       z_xwoba: null,
       z_pull_air_pct: null,
       z_bb_k: null,
-      z_sb_per_pa: null,
+      z_sb: null,
       composite_score: null,
     }));
   } finally {
@@ -224,13 +222,13 @@ const Z_SCORE_WEIGHTS = {
   xwoba: 0.4,
   pull_air_pct: 0.2,
   bb_k: 0.3,
-  sb_per_pa: 0.1,
+  sb: 0.1,
 } as const;
 
 const Z_CLAMP = 2.5;
 
 export function computeZScores(rows: PlayerRow[]): PlayerRow[] {
-  const metrics = ['xwoba', 'pull_air_pct', 'bb_k', 'sb_per_pa'] as const;
+  const metrics = ['xwoba', 'pull_air_pct', 'bb_k', 'sb'] as const;
   type MetricKey = (typeof metrics)[number];
 
   const stats = {} as Record<MetricKey, { mean: number; std: number }>;

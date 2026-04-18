@@ -311,13 +311,13 @@ export default function App() {
               value="pitchers"
               className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
             >
-              Starts
+              SP Rankings
             </ToggleGroupItem>
             <ToggleGroupItem
               value="relievers"
               className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
             >
-              Relievers
+              RP Rankings
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
