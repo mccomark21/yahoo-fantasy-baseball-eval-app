@@ -78,6 +78,34 @@ export interface FilterOptions {
   positions: string[];
 }
 
+export interface AccuracyCohortRow {
+  player_name: string;
+  mlb_team: string;
+  norm_name: string;
+  pa: number;
+  bbe: number;
+  xwoba: number;
+  xwoba_unrounded: number;
+  xwoba_num: number;
+  xwoba_denom: number;
+  game_date_min: string;
+  game_date_max: string;
+  is_benchmark: boolean;
+}
+
+export interface AccuracyCohortResult {
+  bbe_p75: number;
+  eligible_count: number;
+  rows: AccuracyCohortRow[];
+}
+
+export interface BuildAccuracyCohortOptions {
+  selectedLeague: string | null;
+  benchmarkPlayers: string[];
+  randomSampleSize: number;
+  randomSeed: number;
+}
+
 export async function getFilterOptions(): Promise<FilterOptions> {
   const db = await getDB();
   const conn = await db.connect();
@@ -218,6 +246,132 @@ export async function queryPlayers(
   }
 }
 
+export async function buildAccuracyCohort(
+  options: BuildAccuracyCohortOptions
+): Promise<AccuracyCohortResult> {
+  const db = await getDB();
+  const conn = await db.connect();
+
+  try {
+    const leagueFilter = options.selectedLeague
+      ? `AND y.league_name = '${escapeSQL(options.selectedLeague)}'`
+      : '';
+
+    const eligibleSql = `
+      WITH hitter_totals AS (
+        SELECT
+          y.player_name,
+          y.mlb_team,
+          y.norm_name,
+          SUM(g.pa) AS pa,
+          SUM(g.bbe) AS bbe,
+          SUM(g.xwoba_num) AS xwoba_num,
+          SUM(g.xwoba_denom) AS xwoba_denom,
+          MIN(g.game_date) AS game_date_min,
+          MAX(g.game_date) AS game_date_max
+        FROM yahoo y
+        INNER JOIN game_logs g
+          ON y.norm_name = g.norm_name
+        WHERE y.primary_position NOT IN ('SP', 'RP')
+          ${leagueFilter}
+        GROUP BY y.player_name, y.mlb_team, y.norm_name
+      ),
+      threshold AS (
+        SELECT quantile_cont(bbe, 0.75) AS bbe_p75
+        FROM hitter_totals
+      )
+      SELECT
+        h.player_name,
+        h.mlb_team,
+        h.norm_name,
+        h.pa,
+        h.bbe,
+        h.xwoba_num,
+        h.xwoba_denom,
+        CASE WHEN h.xwoba_denom > 0 THEN h.xwoba_num / h.xwoba_denom ELSE NULL END AS xwoba_unrounded,
+        CASE WHEN h.xwoba_denom > 0 THEN ROUND(h.xwoba_num / h.xwoba_denom, 3) ELSE NULL END AS xwoba,
+        h.game_date_min,
+        h.game_date_max,
+        t.bbe_p75
+      FROM hitter_totals h
+      CROSS JOIN threshold t
+      WHERE h.bbe >= t.bbe_p75
+        AND h.xwoba_denom > 0
+    `;
+
+    const eligibleResult = await conn.query(eligibleSql);
+    const eligibleRows = eligibleResult.toArray().map((row) => ({
+      player_name: row.player_name as string,
+      mlb_team: row.mlb_team as string,
+      norm_name: row.norm_name as string,
+      pa: Number(row.pa),
+      bbe: Number(row.bbe),
+      xwoba_num: Number(row.xwoba_num),
+      xwoba_denom: Number(row.xwoba_denom),
+      xwoba_unrounded: Number(row.xwoba_unrounded),
+      xwoba: Number(row.xwoba),
+      game_date_min: String(row.game_date_min),
+      game_date_max: String(row.game_date_max),
+      bbe_p75: Number(row.bbe_p75),
+    }));
+
+    if (eligibleRows.length === 0) {
+      throw new Error('No top-quartile BBE hitters were found for the current filters.');
+    }
+
+    const bbeP75 = eligibleRows[0].bbe_p75;
+
+    const byNormName = new Map(eligibleRows.map((row) => [row.norm_name, row]));
+    const benchmarkNorms = Array.from(
+      new Set(options.benchmarkPlayers.map((name) => normalizePlayerName(name)))
+    );
+
+    const missingBenchmarks = benchmarkNorms.filter((normName) => !byNormName.has(normName));
+    if (missingBenchmarks.length > 0) {
+      const missingDisplay = options.benchmarkPlayers.filter((name) =>
+        missingBenchmarks.includes(normalizePlayerName(name))
+      );
+      throw new Error(
+        `Benchmark player(s) not in top 25% BBE eligibility pool: ${missingDisplay.join(', ')}`
+      );
+    }
+
+    const benchmarkRows: AccuracyCohortRow[] = benchmarkNorms
+      .map((normName) => byNormName.get(normName))
+      .filter((row): row is NonNullable<typeof row> => row != null)
+      .map((row) => ({
+        ...row,
+        is_benchmark: true,
+      }));
+
+    const benchmarkSet = new Set(benchmarkNorms);
+    const sampleCandidates = eligibleRows.filter((row) => !benchmarkSet.has(row.norm_name));
+    const sampleSize = Math.max(0, Math.min(options.randomSampleSize, sampleCandidates.length));
+
+    const sampledRows = sampleCandidates
+      .map((row) => ({ row, score: seededScore(row.norm_name, options.randomSeed) }))
+      .sort((a, b) => a.score - b.score)
+      .slice(0, sampleSize)
+      .map(({ row }) => ({
+        ...row,
+        is_benchmark: false,
+      }));
+
+    const rows = [...benchmarkRows, ...sampledRows].sort((a, b) => {
+      if (a.is_benchmark !== b.is_benchmark) return a.is_benchmark ? -1 : 1;
+      return a.player_name.localeCompare(b.player_name);
+    });
+
+    return {
+      bbe_p75: bbeP75,
+      eligible_count: eligibleRows.length,
+      rows,
+    };
+  } finally {
+    await conn.close();
+  }
+}
+
 const Z_SCORE_WEIGHTS = {
   xwoba: 0.4,
   pull_air_pct: 0.2,
@@ -280,6 +434,15 @@ export function computeZScores(rows: PlayerRow[]): PlayerRow[] {
 
 function escapeSQL(value: string): string {
   return value.replace(/'/g, "''");
+}
+
+function seededScore(value: string, seed: number): number {
+  let h = (seed >>> 0) ^ 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) / 4294967296;
 }
 
 function toNum(v: unknown): number | null {

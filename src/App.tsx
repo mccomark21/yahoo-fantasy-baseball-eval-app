@@ -18,6 +18,7 @@ import { FilterBar } from '@/components/FilterBar';
 import { PlayerTable } from '@/components/PlayerTable';
 import { PitcherTable } from '@/components/PitcherTable';
 import { ReliefPitcherTable } from '@/components/ReliefPitcherTable';
+import { AccuracyCohortPanel } from '@/components/AccuracyCohortPanel';
 import {
   fetchLatestPitcherList,
   fetchLatestReliefList,
@@ -339,6 +340,7 @@ export default function App() {
         selectedReliefTeams={selectedReliefTeams}
         onReliefTeamsChange={setSelectedReliefTeams}
       />
+      {viewMode === 'hitters' && <AccuracyCohortPanel selectedLeague={selectedLeague} />}
       {viewMode === 'hitters' ? (
         <PlayerTable data={players} isLoading={queryLoading} />
       ) : viewMode === 'pitchers' ? (
