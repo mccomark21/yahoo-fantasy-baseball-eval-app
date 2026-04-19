@@ -93,6 +93,8 @@ export default function App() {
   const [timeWindow, setTimeWindow] = useState<TimeWindow>('STD');
   const [selectedPitcherTeams, setSelectedPitcherTeams] = useState<string[]>([]);
   const [selectedReliefTeams, setSelectedReliefTeams] = useState<string[]>([]);
+  const [searchDraft, setSearchDraft] = useState('');
+  const [playerSearch, setPlayerSearch] = useState('');
 
   const defaultsSet = useRef(false);
   const reliefScoringMode = useMemo(
@@ -150,7 +152,8 @@ export default function App() {
         timeWindow,
         selectedLeague,
         selectedTeams,
-        selectedPositions
+        selectedPositions,
+        playerSearch
       );
       const unmatchedCount = rows.filter((r) => r.pa == null && r.bbe == null).length;
       console.log(
@@ -166,7 +169,7 @@ export default function App() {
     } finally {
       setQueryLoading(false);
     }
-  }, [status, timeWindow, selectedLeague, selectedTeams, selectedPositions]);
+  }, [status, timeWindow, selectedLeague, selectedTeams, selectedPositions, playerSearch]);
 
   const runPitcherQuery = useCallback(async () => {
     if (status !== 'ready') return;
@@ -176,7 +179,12 @@ export default function App() {
 
     try {
       const latest = await fetchLatestPitcherList();
-      const joined = await queryPitcherTrends(latest.rows, selectedLeague, selectedPitcherTeams);
+      const joined = await queryPitcherTrends(
+        latest.rows,
+        selectedLeague,
+        selectedPitcherTeams,
+        playerSearch
+      );
       setPitchers(joined);
       setPitcherMeta({
         title: latest.title,
@@ -189,7 +197,7 @@ export default function App() {
     } finally {
       setPitcherLoading(false);
     }
-  }, [status, selectedLeague, selectedPitcherTeams]);
+  }, [status, selectedLeague, selectedPitcherTeams, playerSearch]);
 
   const runReliefQuery = useCallback(async () => {
     if (status !== 'ready') return;
@@ -199,7 +207,12 @@ export default function App() {
 
     try {
       const latest = await fetchLatestReliefList(reliefScoringMode);
-      const joined = await queryReliefTrends(latest.rows, selectedLeague, selectedReliefTeams);
+      const joined = await queryReliefTrends(
+        latest.rows,
+        selectedLeague,
+        selectedReliefTeams,
+        playerSearch
+      );
       setRelievers(joined);
       setReliefMeta({
         title: latest.title,
@@ -213,7 +226,7 @@ export default function App() {
     } finally {
       setReliefLoading(false);
     }
-  }, [status, selectedLeague, selectedReliefTeams, reliefScoringMode]);
+  }, [status, selectedLeague, selectedReliefTeams, reliefScoringMode, playerSearch]);
 
   const handleLeagueChange = useCallback(async (league: string | null) => {
     setSelectedLeague(league);
@@ -297,7 +310,12 @@ export default function App() {
             value={[viewMode]}
             onValueChange={(next: string[]) => {
               if (next.length > 0) {
-                setViewMode(next[next.length - 1] as 'hitters' | 'pitchers' | 'relievers');
+                const nextView = next[next.length - 1] as 'hitters' | 'pitchers' | 'relievers';
+                if (nextView !== viewMode) {
+                  setSearchDraft('');
+                  setPlayerSearch('');
+                }
+                setViewMode(nextView);
               }
             }}
             className="self-start rounded-lg bg-teal-950 p-0.5"
@@ -339,6 +357,9 @@ export default function App() {
         onPitcherTeamsChange={setSelectedPitcherTeams}
         selectedReliefTeams={selectedReliefTeams}
         onReliefTeamsChange={setSelectedReliefTeams}
+        searchDraft={searchDraft}
+        onSearchDraftChange={setSearchDraft}
+        onSearchSubmit={() => setPlayerSearch(searchDraft.trim())}
       />
       {viewMode === 'hitters' && <AccuracyCohortPanel selectedLeague={selectedLeague} />}
       {viewMode === 'hitters' ? (

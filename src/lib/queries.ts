@@ -168,7 +168,8 @@ export async function queryPlayers(
   timeWindow: TimeWindow,
   selectedLeague: string | null,
   selectedTeams: string[],
-  selectedPositions: string[]
+  selectedPositions: string[],
+  playerNameSearch?: string
 ): Promise<PlayerRow[]> {
   const db = await getDB();
   const conn = await db.connect();
@@ -190,6 +191,10 @@ export async function queryPlayers(
         .map((p) => `'${escapeSQL(p)}'`)
         .join(', ');
       whereClauses.push(`y.primary_position IN (${posList})`);
+    }
+    const normalizedSearch = playerNameSearch ? normalizePlayerName(playerNameSearch) : '';
+    if (normalizedSearch) {
+      whereClauses.push(`y.norm_name LIKE '%${escapeSQL(normalizedSearch)}%'`);
     }
 
     const whereSQL = `WHERE ${whereClauses.join(' AND ')}`;
@@ -582,7 +587,8 @@ export function normalizePlayerName(name: string): string {
 export async function queryPitcherTrends(
   ranks: PitcherListRankRow[],
   selectedLeague: string | null,
-  selectedFantasyTeams: string[]
+  selectedFantasyTeams: string[],
+  playerNameSearch?: string
 ): Promise<PitcherTrendRow[]> {
   const db = await getDB();
   const conn = await db.connect();
@@ -627,10 +633,15 @@ export async function queryPitcherTrends(
       } satisfies PitcherTrendRow;
     });
 
-    const filtered =
+    const teamFiltered =
       selectedFantasyTeams.length > 0
         ? joined.filter((r) => r.fantasy_team != null && selectedFantasyTeams.includes(r.fantasy_team))
         : joined;
+
+    const normalizedSearch = playerNameSearch ? normalizePlayerName(playerNameSearch) : '';
+    const filtered = normalizedSearch
+      ? teamFiltered.filter((row) => normalizePlayerName(row.player_name).includes(normalizedSearch))
+      : teamFiltered;
 
     return filtered.sort((a, b) => a.latest_rank - b.latest_rank);
   } finally {
@@ -641,7 +652,8 @@ export async function queryPitcherTrends(
 export async function queryReliefTrends(
   ranks: ReliefListRankRow[],
   selectedLeague: string | null,
-  selectedFantasyTeams: string[]
+  selectedFantasyTeams: string[],
+  playerNameSearch?: string
 ): Promise<ReliefTrendRow[]> {
   const db = await getDB();
   const conn = await db.connect();
@@ -686,10 +698,15 @@ export async function queryReliefTrends(
       } satisfies ReliefTrendRow;
     });
 
-    const filtered =
+    const teamFiltered =
       selectedFantasyTeams.length > 0
         ? joined.filter((r) => r.fantasy_team != null && selectedFantasyTeams.includes(r.fantasy_team))
         : joined;
+
+    const normalizedSearch = playerNameSearch ? normalizePlayerName(playerNameSearch) : '';
+    const filtered = normalizedSearch
+      ? teamFiltered.filter((row) => normalizePlayerName(row.player_name).includes(normalizedSearch))
+      : teamFiltered;
 
     return filtered.sort((a, b) => a.latest_rank - b.latest_rank);
   } finally {

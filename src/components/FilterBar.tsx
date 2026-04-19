@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { MultiSelect } from '@/components/MultiSelect';
+import { Input } from '@/components/ui/input';
 import { useIsMobile } from '@/lib/use-mobile';
 
 interface FilterBarProps {
@@ -28,6 +29,9 @@ interface FilterBarProps {
   onPitcherTeamsChange: (values: string[]) => void;
   selectedReliefTeams: string[];
   onReliefTeamsChange: (values: string[]) => void;
+  searchDraft: string;
+  onSearchDraftChange: (value: string) => void;
+  onSearchSubmit: () => void;
 }
 
 const TIME_WINDOWS: TimeWindow[] = ['STD', '30D', '14D', '7D'];
@@ -48,6 +52,9 @@ export function FilterBar({
   onPitcherTeamsChange,
   selectedReliefTeams,
   onReliefTeamsChange,
+  searchDraft,
+  onSearchDraftChange,
+  onSearchSubmit,
 }: FilterBarProps) {
   const isMobile = useIsMobile();
   const [isOpen, setIsOpen] = useState(false);
@@ -183,6 +190,27 @@ export function FilterBar({
                 </ToggleGroup>
               </div>
             )}
+
+            <div className="flex flex-col gap-1 w-full md:w-[220px]">
+              <label className="text-xs font-medium text-muted-foreground">
+                {mode === 'hitters'
+                  ? 'Player Name'
+                  : mode === 'pitchers'
+                    ? 'Pitcher Name'
+                    : 'Reliever Name'}
+              </label>
+              <Input
+                value={searchDraft}
+                onChange={(event) => onSearchDraftChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    onSearchSubmit();
+                  }
+                }}
+                placeholder="Type name and press Enter"
+              />
+            </div>
           </div>
         </div>
       </div>
