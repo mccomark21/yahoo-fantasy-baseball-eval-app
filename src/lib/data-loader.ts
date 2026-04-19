@@ -130,9 +130,27 @@ export async function loadData(): Promise<void> {
 
     await conn.query(`
       CREATE OR REPLACE TABLE yahoo AS
-      SELECT *,
-        ${buildAliasCase(yahooRawNorm)} AS norm_name
-      FROM read_csv_auto('yahoo.csv')
+      WITH yahoo_src AS (
+        SELECT *,
+          ${buildAliasCase(yahooRawNorm)} AS norm_name,
+          ROW_NUMBER() OVER () AS source_row_num
+        FROM read_csv_auto('yahoo.csv')
+      ),
+      yahoo_ranked AS (
+        SELECT *,
+          CASE
+            WHEN primary_position NOT IN ('SP', 'RP')
+              THEN ROW_NUMBER() OVER (
+                PARTITION BY norm_name
+                ORDER BY source_row_num DESC
+              )
+            ELSE 1
+          END AS keep_rank
+        FROM yahoo_src
+      )
+      SELECT * EXCLUDE (source_row_num, keep_rank)
+      FROM yahoo_ranked
+      WHERE keep_rank = 1
     `);
 
     await conn.query(`
