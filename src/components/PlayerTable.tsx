@@ -6,7 +6,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from '@tanstack/react-table';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Table,
   TableBody,
@@ -40,6 +40,7 @@ const NUMERIC_COLUMNS = new Set([
   'z_sb',
   'composite_score',
 ]);
+const RAW_METRIC_COLUMNS = new Set(['xwoba', 'pull_air_pct', 'bb_k', 'sb']);
 
 function hasNoStatcastData(row: PlayerRow): boolean {
   return row.pa == null && row.bbe == null;
@@ -54,7 +55,78 @@ function getZScoreBgClass(value: number | null): string {
   return 'bg-green-200 dark:bg-green-900/50';
 }
 
-const columns: ColumnDef<PlayerRow>[] = [
+function buildSparklinePath(values: number[], width: number, height: number): string {
+  if (values.length === 0) return '';
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const xStep = values.length > 1 ? width / (values.length - 1) : 0;
+  const range = max - min;
+
+  return values
+    .map((value, idx) => {
+      const x = idx * xStep;
+      const y = range === 0 ? height / 2 : height - ((value - min) / range) * height;
+      return `${idx === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(' ');
+}
+
+function trendClass(values: number[]): string {
+  if (values.length < 2) return 'text-muted-foreground';
+  const delta = values[values.length - 1] - values[0];
+  if (Math.abs(delta) < 1e-6) return 'text-muted-foreground';
+  return delta > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400';
+}
+
+function MetricValueWithSparkline({
+  value,
+  display,
+  trend,
+  showSparkline,
+}: {
+  value: number | null;
+  display: string;
+  trend: number[];
+  showSparkline: boolean;
+}) {
+  if (value == null) {
+    return '—';
+  }
+
+  if (!showSparkline || trend.length < 2) {
+    return display;
+  }
+
+  const width = 46;
+  const height = 14;
+  const path = buildSparklinePath(trend, width, height);
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span>{display}</span>
+      <svg
+        className={trendClass(trend)}
+        viewBox={`0 0 ${width} ${height}`}
+        width={width}
+        height={height}
+        aria-hidden="true"
+      >
+        <path
+          d={path}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
+  );
+}
+
+function getColumns(showMetricSparklines: boolean): ColumnDef<PlayerRow>[] {
+  return [
   {
     accessorKey: 'player_name',
     header: 'Player',
@@ -103,33 +175,61 @@ const columns: ColumnDef<PlayerRow>[] = [
   {
     accessorKey: 'xwoba',
     header: 'xwOBA',
-    cell: ({ getValue }) => {
+    cell: ({ getValue, row }) => {
       const v = getValue<number | null>();
-      return v != null ? v.toFixed(3) : '—';
+      return (
+        <MetricValueWithSparkline
+          value={v}
+          display={v != null ? v.toFixed(3) : '—'}
+          trend={row.original.trend_xwoba}
+          showSparkline={showMetricSparklines}
+        />
+      );
     },
   },
   {
     accessorKey: 'pull_air_pct',
     header: 'Pull Air%',
-    cell: ({ getValue }) => {
+    cell: ({ getValue, row }) => {
       const v = getValue<number | null>();
-      return v != null ? `${v.toFixed(1)}%` : '—';
+      return (
+        <MetricValueWithSparkline
+          value={v}
+          display={v != null ? `${v.toFixed(1)}%` : '—'}
+          trend={row.original.trend_pull_air_pct}
+          showSparkline={showMetricSparklines}
+        />
+      );
     },
   },
   {
     accessorKey: 'bb_k',
     header: 'BB:K',
-    cell: ({ getValue }) => {
+    cell: ({ getValue, row }) => {
       const v = getValue<number | null>();
-      return v != null ? v.toFixed(2) : '—';
+      return (
+        <MetricValueWithSparkline
+          value={v}
+          display={v != null ? v.toFixed(2) : '—'}
+          trend={row.original.trend_bb_k}
+          showSparkline={showMetricSparklines}
+        />
+      );
     },
   },
   {
     accessorKey: 'sb',
     header: 'SB',
-    cell: ({ getValue }) => {
+    cell: ({ getValue, row }) => {
       const v = getValue<number | null>();
-      return v != null ? v.toFixed(0) : '—';
+      return (
+        <MetricValueWithSparkline
+          value={v}
+          display={v != null ? v.toFixed(0) : '—'}
+          trend={row.original.trend_sb}
+          showSparkline={showMetricSparklines}
+        />
+      );
     },
   },
   {
@@ -172,11 +272,13 @@ const columns: ColumnDef<PlayerRow>[] = [
       return v != null ? v.toFixed(2) : '—';
     },
   },
-];
+  ];
+}
 
 interface PlayerTableProps {
   data: PlayerRow[];
   isLoading: boolean;
+  showMetricSparklines: boolean;
 }
 
 const SORT_OPTIONS = [
@@ -209,7 +311,17 @@ function ZBadge({ label, value }: { label: string; value: number | null }) {
   );
 }
 
-function PlayerCard({ player, expanded, onToggle }: { player: PlayerRow; expanded: boolean; onToggle: () => void }) {
+function PlayerCard({
+  player,
+  expanded,
+  onToggle,
+  showMetricSparklines,
+}: {
+  player: PlayerRow;
+  expanded: boolean;
+  onToggle: () => void;
+  showMetricSparklines: boolean;
+}) {
   return (
     <div className="border-b px-3 py-2.5">
       <button
@@ -263,19 +375,47 @@ function PlayerCard({ player, expanded, onToggle }: { player: PlayerRow; expande
           </div>
           <div>
             <span className="text-muted-foreground">xwOBA</span>{' '}
-            <span className="font-medium font-mono tabular-nums">{fmt(player.xwoba, 3)}</span>
+            <span className="font-medium font-mono tabular-nums">
+              <MetricValueWithSparkline
+                value={player.xwoba}
+                display={fmt(player.xwoba, 3)}
+                trend={player.trend_xwoba}
+                showSparkline={showMetricSparklines}
+              />
+            </span>
           </div>
           <div>
             <span className="text-muted-foreground">Pull Air%</span>{' '}
-            <span className="font-medium font-mono tabular-nums">{fmt(player.pull_air_pct, 1, '%')}</span>
+            <span className="font-medium font-mono tabular-nums">
+              <MetricValueWithSparkline
+                value={player.pull_air_pct}
+                display={fmt(player.pull_air_pct, 1, '%')}
+                trend={player.trend_pull_air_pct}
+                showSparkline={showMetricSparklines}
+              />
+            </span>
           </div>
           <div>
             <span className="text-muted-foreground">BB:K</span>{' '}
-            <span className="font-medium font-mono tabular-nums">{fmt(player.bb_k, 2)}</span>
+            <span className="font-medium font-mono tabular-nums">
+              <MetricValueWithSparkline
+                value={player.bb_k}
+                display={fmt(player.bb_k, 2)}
+                trend={player.trend_bb_k}
+                showSparkline={showMetricSparklines}
+              />
+            </span>
           </div>
           <div>
             <span className="text-muted-foreground">SB</span>{' '}
-            <span className="font-medium font-mono tabular-nums">{fmt(player.sb, 0)}</span>
+            <span className="font-medium font-mono tabular-nums">
+              <MetricValueWithSparkline
+                value={player.sb}
+                display={fmt(player.sb, 0)}
+                trend={player.trend_sb}
+                showSparkline={showMetricSparklines}
+              />
+            </span>
           </div>
         </div>
       )}
@@ -283,12 +423,16 @@ function PlayerCard({ player, expanded, onToggle }: { player: PlayerRow; expande
   );
 }
 
-export function PlayerTable({ data, isLoading }: PlayerTableProps) {
+export function PlayerTable({ data, isLoading, showMetricSparklines }: PlayerTableProps) {
   const isMobile = useIsMobile();
   const [sorting, setSorting] = useState<SortingState>([
     { id: 'composite_score', desc: true },
   ]);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  const columns = useMemo(
+    () => getColumns(showMetricSparklines),
+    [showMetricSparklines]
+  );
 
   // TanStack table returns functions that the React compiler warns about by design.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -371,6 +515,7 @@ export function PlayerTable({ data, isLoading }: PlayerTableProps) {
                 player={row.original}
                 expanded={expandedRows.has(idx)}
                 onToggle={() => toggleExpand(idx)}
+                showMetricSparklines={showMetricSparklines}
               />
             ))
           ) : (
@@ -423,7 +568,7 @@ export function PlayerTable({ data, isLoading }: PlayerTableProps) {
                   {row.getVisibleCells().map((cell) => (
                     <TableCell
                       key={cell.id}
-                      className={`whitespace-nowrap ${NUMERIC_COLUMNS.has(cell.column.id) ? 'font-mono tabular-nums' : ''} ${Z_SCORE_COLUMNS.has(cell.column.id) ? getZScoreBgClass(cell.getValue<number | null>()) : ''}`}
+                      className={`whitespace-nowrap ${NUMERIC_COLUMNS.has(cell.column.id) ? 'font-mono tabular-nums' : ''} ${Z_SCORE_COLUMNS.has(cell.column.id) ? getZScoreBgClass(cell.getValue<number | null>()) : ''} ${RAW_METRIC_COLUMNS.has(cell.column.id) ? 'min-w-[96px]' : ''}`}
                     >
                       {flexRender(
                         cell.column.columnDef.cell,

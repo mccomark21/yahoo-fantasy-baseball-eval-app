@@ -342,7 +342,11 @@ export default function App() {
       />
       {viewMode === 'hitters' && <AccuracyCohortPanel selectedLeague={selectedLeague} />}
       {viewMode === 'hitters' ? (
-        <PlayerTable data={players} isLoading={queryLoading} />
+        <PlayerTable
+          data={players}
+          isLoading={queryLoading}
+          showMetricSparklines={timeWindow === 'STD'}
+        />
       ) : viewMode === 'pitchers' ? (
         <>
           <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">

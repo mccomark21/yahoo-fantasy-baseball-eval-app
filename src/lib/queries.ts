@@ -5,6 +5,7 @@ export type TimeWindow = 'STD' | '7D' | '14D' | '30D';
 
 export interface PlayerRow {
   player_name: string;
+  norm_name: string;
   mlb_team: string;
   position: string;
   league_name: string;
@@ -20,6 +21,10 @@ export interface PlayerRow {
   z_bb_k: number | null;
   z_sb: number | null;
   composite_score: number | null;
+  trend_xwoba: number[];
+  trend_pull_air_pct: number[];
+  trend_bb_k: number[];
+  trend_sb: number[];
 }
 
 export interface PitcherTrendRow {
@@ -192,6 +197,7 @@ export async function queryPlayers(
     const sql = `
       SELECT
         y.player_name,
+        y.norm_name,
         y.mlb_team,
         y.eligible_positions AS position,
         y.league_name,
@@ -215,6 +221,7 @@ export async function queryPlayers(
       ${whereSQL}
       GROUP BY
         y.player_name,
+        y.norm_name,
         y.mlb_team,
         y.eligible_positions,
         y.league_name,
@@ -223,8 +230,9 @@ export async function queryPlayers(
     `;
 
     const result = await conn.query(sql);
-    return result.toArray().map((row) => ({
+    const rows = result.toArray().map((row) => ({
       player_name: row.player_name as string,
+      norm_name: row.norm_name as string,
       mlb_team: row.mlb_team as string,
       position: row.position as string,
       league_name: row.league_name as string,
@@ -240,10 +248,120 @@ export async function queryPlayers(
       z_bb_k: null,
       z_sb: null,
       composite_score: null,
+      trend_xwoba: [],
+      trend_pull_air_pct: [],
+      trend_bb_k: [],
+      trend_sb: [],
     }));
+
+    if (timeWindow !== 'STD' || rows.length === 0) {
+      return rows;
+    }
+
+    const trendByNormName = await getSeasonToDateMetricTrends(
+      conn,
+      rows.map((r) => r.norm_name)
+    );
+
+    return rows.map((row) => {
+      const trend = trendByNormName.get(row.norm_name);
+      if (!trend) return row;
+      return {
+        ...row,
+        trend_xwoba: trend.xwoba,
+        trend_pull_air_pct: trend.pull_air_pct,
+        trend_bb_k: trend.bb_k,
+        trend_sb: trend.sb,
+      };
+    });
   } finally {
     await conn.close();
   }
+}
+
+async function getSeasonToDateMetricTrends(
+  conn: Awaited<ReturnType<Awaited<ReturnType<typeof getDB>>['connect']>>,
+  normNames: string[]
+): Promise<Map<string, { xwoba: number[]; pull_air_pct: number[]; bb_k: number[]; sb: number[] }>> {
+  const uniqueNormNames = Array.from(new Set(normNames));
+  if (uniqueNormNames.length === 0) {
+    return new Map();
+  }
+
+  const normNameList = uniqueNormNames
+    .map((name) => `'${escapeSQL(name)}'`)
+    .join(', ');
+
+  const sql = `
+    WITH per_day AS (
+      SELECT
+        g.norm_name,
+        g.game_date,
+        CASE WHEN SUM(g.xwoba_denom) > 0
+          THEN SUM(g.xwoba_num)::DOUBLE / SUM(g.xwoba_denom)
+          ELSE NULL END AS xwoba,
+        CASE WHEN SUM(g.bbe) > 0
+          THEN SUM(g.pull_air_events)::DOUBLE / SUM(g.bbe) * 100
+          ELSE NULL END AS pull_air_pct,
+        CASE WHEN SUM(g.k) > 0
+          THEN SUM(g.bb)::DOUBLE / SUM(g.k)
+          ELSE NULL END AS bb_k,
+        SUM(g.sb)::DOUBLE AS sb,
+        ROW_NUMBER() OVER (
+          PARTITION BY g.norm_name
+          ORDER BY g.game_date DESC
+        ) AS row_num
+      FROM game_logs g
+      WHERE g.norm_name IN (${normNameList})
+      GROUP BY g.norm_name, g.game_date
+    ),
+    last_games AS (
+      SELECT *
+      FROM per_day
+      WHERE row_num <= 12
+    )
+    SELECT
+      norm_name,
+      game_date,
+      xwoba,
+      pull_air_pct,
+      bb_k,
+      sb
+    FROM last_games
+    ORDER BY norm_name, game_date
+  `;
+
+  const result = await conn.query(sql);
+  const byNormName = new Map<string, { xwoba: number[]; pull_air_pct: number[]; bb_k: number[]; sb: number[] }>();
+
+  for (const row of result.toArray()) {
+    const normName = row.norm_name as string | null;
+    if (!normName) continue;
+
+    if (!byNormName.has(normName)) {
+      byNormName.set(normName, {
+        xwoba: [],
+        pull_air_pct: [],
+        bb_k: [],
+        sb: [],
+      });
+    }
+
+    const trend = byNormName.get(normName);
+    if (!trend) continue;
+
+    const xwoba = toNum(row.xwoba);
+    const pullAirPct = toNum(row.pull_air_pct);
+    const bbK = toNum(row.bb_k);
+    const sb = toNum(row.sb);
+
+    if (xwoba != null) trend.xwoba.push(xwoba);
+    if (pullAirPct != null) trend.pull_air_pct.push(pullAirPct);
+    if (bbK != null) trend.bb_k.push(bbK);
+    if (sb != null) trend.sb.push(sb);
+  }
+
+  return byNormName;
 }
 
 export async function buildAccuracyCohort(
