@@ -6,23 +6,27 @@ import {
   queryPlayers,
   queryPitcherTrends,
   queryReliefTrends,
+  queryProspects,
   filterByVolume,
   computeZScores,
   type FilterOptions,
   type PlayerRow,
   type PitcherTrendRow,
   type ReliefTrendRow,
+  type ProspectRow,
   type TimeWindow,
 } from '@/lib/queries';
 import { FilterBar } from '@/components/FilterBar';
 import { PlayerTable } from '@/components/PlayerTable';
 import { PitcherTable } from '@/components/PitcherTable';
 import { ReliefPitcherTable } from '@/components/ReliefPitcherTable';
+import { ProspectTable } from '@/components/ProspectTable';
 import {
   fetchLatestPitcherList,
   fetchLatestReliefList,
   type ReliefScoringMode,
 } from '@/lib/pitcherlist-client';
+import { fetchLatestProspects, type ProspectSourceStatus } from '@/lib/prospects-client';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Toggle } from '@/components/ui/toggle';
 import { Moon, Sun } from 'lucide-react';
@@ -65,7 +69,7 @@ export default function App() {
   });
   const [status, setStatus] = useState<AppStatus>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'hitters' | 'pitchers' | 'relievers'>('hitters');
+  const [viewMode, setViewMode] = useState<'hitters' | 'pitchers' | 'relievers' | 'prospects'>('hitters');
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
     leagues: [],
     fantasyTeams: [],
@@ -74,11 +78,14 @@ export default function App() {
   const [players, setPlayers] = useState<PlayerRow[]>([]);
   const [pitchers, setPitchers] = useState<PitcherTrendRow[]>([]);
   const [relievers, setRelievers] = useState<ReliefTrendRow[]>([]);
+  const [prospects, setProspects] = useState<ProspectRow[]>([]);
   const [queryLoading, setQueryLoading] = useState(false);
   const [pitcherLoading, setPitcherLoading] = useState(false);
   const [reliefLoading, setReliefLoading] = useState(false);
+  const [prospectLoading, setProspectLoading] = useState(false);
   const [pitcherError, setPitcherError] = useState<string | null>(null);
   const [reliefError, setReliefError] = useState<string | null>(null);
+  const [prospectError, setProspectError] = useState<string | null>(null);
   const [pitcherMeta, setPitcherMeta] = useState<{
     title: string;
     source_url: string;
@@ -90,6 +97,11 @@ export default function App() {
     published_at: string | null;
     scoring_mode: ReliefScoringMode;
   } | null>(null);
+  const [prospectsMeta, setProspectsMeta] = useState<{
+    title: string;
+    scraped_at: string;
+    sources: ProspectSourceStatus[];
+  } | null>(null);
   const [leagueFantasyTeams, setLeagueFantasyTeams] = useState<string[]>([]);
 
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
@@ -98,6 +110,13 @@ export default function App() {
   const [timeWindow, setTimeWindow] = useState<TimeWindow>('STD');
   const [selectedPitcherTeams, setSelectedPitcherTeams] = useState<string[]>([]);
   const [selectedReliefTeams, setSelectedReliefTeams] = useState<string[]>([]);
+  const [selectedProspectTeams, setSelectedProspectTeams] = useState<string[]>([]);
+  const [selectedProspectMaxAge, setSelectedProspectMaxAge] = useState<number | null>(null);
+  const [selectedProspectRosterFilter, setSelectedProspectRosterFilter] = useState<
+    'all' | 'rostered' | 'available'
+  >('all');
+  const [prospectAgeOptions, setProspectAgeOptions] = useState<number[]>([]);
+  const [prospectPositions, setProspectPositions] = useState<string[]>([]);
   const [searchDraft, setSearchDraft] = useState('');
   const [playerSearch, setPlayerSearch] = useState('');
 
@@ -132,6 +151,7 @@ export default function App() {
             setSelectedTeams(defaults);
             setSelectedPitcherTeams(defaults);
             setSelectedReliefTeams(defaults);
+            setSelectedProspectTeams([]);
             console.log(
               `[filters:init] Applied default roster focus for ${firstLeague}: ${defaults.length}/${teams.length} teams`
             );
@@ -234,6 +254,72 @@ export default function App() {
     }
   }, [status, selectedLeague, selectedReliefTeams, reliefScoringMode, playerSearch]);
 
+  const runProspectQuery = useCallback(async () => {
+    if (status !== 'ready') return;
+
+    setProspectLoading(true);
+    setProspectError(null);
+
+    try {
+      const latest = await fetchLatestProspects();
+      const joined = await queryProspects(
+        latest.rows,
+        selectedLeague,
+        selectedProspectTeams,
+        selectedPositions,
+        playerSearch,
+        125,
+        selectedProspectMaxAge,
+        selectedProspectRosterFilter
+      );
+      setProspects(joined);
+
+      const positions = Array.from(
+        new Set(
+          latest.rows
+            .flatMap((row) => row.positions)
+            .map((position) => position.trim().toUpperCase())
+            .filter(Boolean)
+        )
+      ).sort();
+      setProspectPositions(positions);
+
+      const ageOptions = Array.from(
+        new Set(
+          latest.rows
+            .map((row) => row.age)
+            .filter((age): age is number => age != null && Number.isFinite(age))
+            .map((age) => Math.ceil(age))
+        )
+      ).sort((a, b) => a - b);
+      setProspectAgeOptions(ageOptions);
+      if (selectedProspectMaxAge != null && !ageOptions.includes(selectedProspectMaxAge)) {
+        setSelectedProspectMaxAge(null);
+      }
+
+      setProspectsMeta({
+        title: latest.title,
+        scraped_at: latest.scraped_at,
+        sources: latest.sources,
+      });
+    } catch (err) {
+      setProspectError(err instanceof Error ? err.message : String(err));
+      setProspects([]);
+      setProspectPositions([]);
+      setProspectAgeOptions([]);
+    } finally {
+      setProspectLoading(false);
+    }
+  }, [
+    status,
+    selectedLeague,
+    selectedProspectTeams,
+    selectedPositions,
+    playerSearch,
+    selectedProspectMaxAge,
+    selectedProspectRosterFilter,
+  ]);
+
   const handleLeagueChange = useCallback(async (league: string | null) => {
     setSelectedLeague(league);
     if (league) {
@@ -243,6 +329,7 @@ export default function App() {
       setSelectedTeams(defaults.length > 0 ? defaults : []);
       setSelectedPitcherTeams(defaults.length > 0 ? defaults : []);
       setSelectedReliefTeams(defaults.length > 0 ? defaults : []);
+      setSelectedProspectTeams([]);
       if (defaults.length > 0) {
         console.log(
           `[filters:league] Applied default roster focus for ${league}: ${defaults.length}/${teams.length} teams`
@@ -255,6 +342,7 @@ export default function App() {
       setSelectedTeams([]);
       setSelectedPitcherTeams([]);
       setSelectedReliefTeams([]);
+      setSelectedProspectTeams([]);
     }
   }, []);
 
@@ -269,10 +357,14 @@ export default function App() {
         void runPitcherQuery();
         return;
       }
+      if (viewMode === 'prospects') {
+        void runProspectQuery();
+        return;
+      }
       void runReliefQuery();
     }, 100);
     return () => clearTimeout(timer);
-  }, [viewMode, runQuery, runPitcherQuery, runReliefQuery]);
+  }, [viewMode, runQuery, runPitcherQuery, runReliefQuery, runProspectQuery]);
 
   if (status === 'loading') {
     return (
@@ -319,7 +411,11 @@ export default function App() {
             value={[viewMode]}
             onValueChange={(next: string[]) => {
               if (next.length > 0) {
-                const nextView = next[next.length - 1] as 'hitters' | 'pitchers' | 'relievers';
+                const nextView = next[next.length - 1] as
+                  | 'hitters'
+                  | 'pitchers'
+                  | 'relievers'
+                  | 'prospects';
                 if (nextView !== viewMode) {
                   setSearchDraft('');
                   setPlayerSearch('');
@@ -347,6 +443,12 @@ export default function App() {
             >
               RP Rankings
             </ToggleGroupItem>
+            <ToggleGroupItem
+              value="prospects"
+              className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
+            >
+              Prospects
+            </ToggleGroupItem>
           </ToggleGroup>
         </div>
       </header>
@@ -366,6 +468,14 @@ export default function App() {
         onPitcherTeamsChange={setSelectedPitcherTeams}
         selectedReliefTeams={selectedReliefTeams}
         onReliefTeamsChange={setSelectedReliefTeams}
+        selectedProspectTeams={selectedProspectTeams}
+        onProspectTeamsChange={setSelectedProspectTeams}
+        selectedProspectMaxAge={selectedProspectMaxAge}
+        onProspectMaxAgeChange={setSelectedProspectMaxAge}
+        selectedProspectRosterFilter={selectedProspectRosterFilter}
+        onProspectRosterFilterChange={setSelectedProspectRosterFilter}
+        prospectAgeOptions={prospectAgeOptions}
+        prospectPositions={prospectPositions}
         searchDraft={searchDraft}
         onSearchDraftChange={setSearchDraft}
         onSearchSubmit={() => setPlayerSearch(searchDraft.trim())}
@@ -401,7 +511,7 @@ export default function App() {
           </div>
           <PitcherTable data={pitchers} isLoading={pitcherLoading} />
         </>
-      ) : (
+      ) : viewMode === 'relievers' ? (
         <>
           <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
             {reliefError ? (
@@ -426,6 +536,30 @@ export default function App() {
             )}
           </div>
           <ReliefPitcherTable data={relievers} isLoading={reliefLoading} />
+        </>
+      ) : (
+        <>
+          <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
+            {prospectError ? (
+              <span className="text-destructive">Prospect rankings fetch failed: {prospectError}</span>
+            ) : prospectsMeta ? (
+              <span>
+                {prospectsMeta.title}
+                {` · Refreshed ${new Date(prospectsMeta.scraped_at).toLocaleString()}`}
+                {' · Sources: '}
+                {prospectsMeta.sources
+                  .map((source) =>
+                    source.status === 'ok'
+                      ? `${source.source} (${source.row_count})`
+                      : `${source.source} (error)`
+                  )
+                  .join(', ')}
+              </span>
+            ) : (
+              <span>Loading latest prospect rankings...</span>
+            )}
+          </div>
+          <ProspectTable data={prospects} isLoading={prospectLoading} />
         </>
       )}
     </div>

@@ -1,5 +1,6 @@
 import { getDB } from './duckdb';
 import type { PitcherListRankRow, ReliefListRankRow, TrendDirection } from './pitcherlist-client';
+import type { ProspectSourceRow } from './prospects-client';
 
 export type TimeWindow = 'STD' | '7D' | '14D' | '30D';
 
@@ -49,6 +50,37 @@ export interface ReliefTrendRow {
   notes: string | null;
   fantasy_team: string | null;
   league_name: string | null;
+}
+
+export interface ProspectRow {
+  player_name: string;
+  norm_name: string;
+  organization: string | null;
+  positions: string;
+  is_rostered: boolean;
+  fantasy_team: string | null;
+  league_name: string | null;
+  mlb_rank: number | null;
+  fangraphs_rank: number | null;
+  prospects_live_rank: number | null;
+  average_rank: number;
+  highest_rank: number;
+  lowest_rank: number;
+  stddev_rank: number;
+  best_rank_bias_score: number;
+  age: number | null;
+  eta: string | null;
+  level: string | null;
+  height: string | null;
+  weight: string | null;
+  bats: string | null;
+  throws: string | null;
+  fv: string | null;
+  ofp: string | null;
+  player_summary: string | null;
+  stats_summary: string | null;
+  scouting_report: string | null;
+  notes: string | null;
 }
 
 const VOLUME_THRESHOLD_PCT = 0.5;
@@ -605,14 +637,466 @@ function toNum(v: unknown): number | null {
   return isNaN(n) ? null : n;
 }
 
+function toRounded(value: number, digits: number): number {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function stddev(values: number[]): number {
+  if (values.length === 0) return 0;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function normalizeDisplayText(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  let normalizedInput = value;
+  if (/[ÃÂ]/.test(normalizedInput)) {
+    try {
+      normalizedInput = decodeURIComponent(escape(normalizedInput));
+    } catch {
+      normalizedInput = value;
+    }
+  }
+  const normalized = normalizedInput
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeEta(value: string | null): string | null {
+  const normalized = normalizeDisplayText(value);
+  if (!normalized) return null;
+  const yearMatch = normalized.match(/\b(19|20)\d{2}\b/);
+  if (yearMatch) return yearMatch[0];
+  if (/^mlb$/i.test(normalized)) return 'MLB';
+  return normalized;
+}
+
+function normalizeLevel(value: string | null): string | null {
+  const normalized = normalizeDisplayText(value);
+  if (!normalized) return null;
+  const upper = normalized.toUpperCase();
+  if (upper === 'AAA' || upper === 'AA' || upper === 'A+' || upper === 'A' || upper === 'MLB' || upper === 'ROK') {
+    return upper;
+  }
+  if (/TRIPLE\s*-?\s*A/i.test(normalized)) return 'AAA';
+  if (/DOUBLE\s*-?\s*A/i.test(normalized)) return 'AA';
+  if (/HIGH\s*-?\s*A/i.test(normalized)) return 'A+';
+  if (/LOW\s*-?\s*A|SINGLE\s*-?\s*A/i.test(normalized)) return 'A';
+  return normalized;
+}
+
+function normalizeBatThrow(value: string | null): string | null {
+  const normalized = normalizeDisplayText(value)?.toUpperCase() ?? null;
+  if (!normalized) return null;
+  if (normalized === 'RIGHT' || normalized === 'R') return 'R';
+  if (normalized === 'LEFT' || normalized === 'L') return 'L';
+  if (normalized === 'SWITCH' || normalized === 'S') return 'S';
+  return null;
+}
+
+function normalizeHeight(value: string | null): string | null {
+  const normalized = normalizeDisplayText(value);
+  if (!normalized) return null;
+  const feetInches = normalized.match(/(\d+)\s*['’]\s*(\d{1,2})\s*(?:\"|”|in)?/);
+  if (feetInches) return `${feetInches[1]}'${feetInches[2]}"`;
+  return normalized;
+}
+
+function normalizeWeight(value: string | null): string | null {
+  const normalized = normalizeDisplayText(value);
+  if (!normalized) return null;
+  const numberMatch = normalized.match(/\d{2,3}/);
+  if (!numberMatch) return normalized;
+  return `${numberMatch[0]} lb`;
+}
+
+function normalizeAge(value: number | null): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.round(value * 10) / 10;
+}
+
+function normalizeScoutingSnippet(value: string | null, maxLen: number): string | null {
+  const normalized = normalizeDisplayText(value);
+  if (!normalized) return null;
+  if (normalized.length <= maxLen) return normalized;
+  return `${normalized.slice(0, maxLen).trimEnd()}...`;
+}
+
+function splitSentences(value: string): string[] {
+  return value
+    .split(/(?<=[.!?])\s+|\s+[-|]\s+/)
+    .map((part) => normalizeDisplayText(part) ?? '')
+    .map((part) => part.replace(/^summary\s*:\s*/i, '').trim())
+    .filter((part) => part.length >= 25);
+}
+
+function canonicalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isNearDuplicate(candidate: string, existing: string): boolean {
+  const a = canonicalizeText(candidate);
+  const b = canonicalizeText(existing);
+  if (!a || !b) return false;
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+
+  const aTokens = new Set(a.split(' '));
+  const bTokens = new Set(b.split(' '));
+  let overlap = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) overlap += 1;
+  }
+
+  const denom = Math.max(aTokens.size, bTokens.size);
+  return denom > 0 && overlap / denom >= 0.75;
+}
+
+function ensureSentence(value: string): string {
+  return /[.!?]$/.test(value) ? value : `${value}.`;
+}
+
+function truncateSummary(value: string, maxLen: number): string {
+  if (value.length <= maxLen) return value;
+  const truncated = value.slice(0, maxLen).trimEnd();
+  return `${truncated.replace(/[,.!?;:]+$/g, '')}...`;
+}
+
+function buildProspectSummary(args: {
+  statsSummary: string | null;
+  notes: string | null;
+  scoutingReport: string | null;
+  fv: string | null;
+  ofp: string | null;
+  eta: string | null;
+  level: string | null;
+}): string | null {
+  const headlineBits: string[] = [];
+  if (args.fv) headlineBits.push(`FV ${args.fv}`);
+  if (args.ofp) headlineBits.push(`OFP ${args.ofp}`);
+  if (args.eta) headlineBits.push(`ETA ${args.eta}`);
+  if (args.level) headlineBits.push(`Level ${args.level}`);
+  const headline = headlineBits.length > 0 ? `${headlineBits.join(' | ')}.` : null;
+
+  const candidates = [args.notes, args.statsSummary, args.scoutingReport]
+    .filter((text): text is string => !!text)
+    .flatMap((text) => splitSentences(text));
+
+  const selected: string[] = [];
+  for (const sentence of candidates) {
+    if (selected.some((existing) => isNearDuplicate(sentence, existing))) {
+      continue;
+    }
+    selected.push(sentence);
+    if (selected.length >= 2) break;
+  }
+
+  const body = selected.map(ensureSentence).join(' ');
+  const combined = normalizeDisplayText([headline, body].filter(Boolean).join(' '));
+  if (!combined) return null;
+  return truncateSummary(combined, 320);
+}
+
 export function normalizePlayerName(name: string): string {
-  return name
+  let normalizedInput = name;
+  if (/[ÃÂ]/.test(normalizedInput)) {
+    try {
+      normalizedInput = decodeURIComponent(escape(normalizedInput));
+    } catch {
+      normalizedInput = name;
+    }
+  }
+
+  return normalizedInput
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+(Jr\.?|Sr\.?|II|III|IV)$/i, '')
     .replace(/[^a-zA-Z ]/g, '')
     .toLowerCase()
     .trim();
+}
+
+interface ProspectOwnership {
+  fantasy_team: string | null;
+  league_name: string | null;
+}
+
+interface BuildProspectRowsOptions {
+  selectedFantasyTeams: string[];
+  selectedPositions: string[];
+  playerNameSearch?: string;
+  missingRankDefault?: number;
+  maxAge?: number | null;
+  rosterFilter?: 'all' | 'rostered' | 'available';
+}
+
+export function buildProspectRows(
+  sourceRows: ProspectSourceRow[],
+  ownerByNormName: Map<string, ProspectOwnership>,
+  options: BuildProspectRowsOptions
+): ProspectRow[] {
+  const {
+    selectedFantasyTeams,
+    selectedPositions,
+    playerNameSearch,
+    missingRankDefault = 125,
+    maxAge = null,
+    rosterFilter = 'all',
+  } = options;
+
+  const grouped = new Map<string, ProspectSourceRow[]>();
+  for (const sourceRow of sourceRows) {
+    const normName = normalizePlayerName(sourceRow.player_name);
+    if (!normName) continue;
+
+    const existing = grouped.get(normName) ?? [];
+    existing.push(sourceRow);
+    grouped.set(normName, existing);
+  }
+
+  const rows: ProspectRow[] = [];
+
+  for (const [normName, group] of grouped.entries()) {
+    const rankBySource = new Map<string, number>();
+    for (const sourceRow of group) {
+      const existingRank = rankBySource.get(sourceRow.source);
+      if (existingRank == null || sourceRow.rank < existingRank) {
+        rankBySource.set(sourceRow.source, sourceRow.rank);
+      }
+    }
+
+    const mlbRank = rankBySource.get('mlb') ?? null;
+    const fangraphsRank = rankBySource.get('fangraphs') ?? null;
+    const prospectsLiveRank = rankBySource.get('prospects_live') ?? null;
+
+    const effectiveRanks = [
+      mlbRank ?? missingRankDefault,
+      fangraphsRank ?? missingRankDefault,
+      prospectsLiveRank ?? missingRankDefault,
+    ];
+
+    const avg = effectiveRanks.reduce((sum, rank) => sum + rank, 0) / effectiveRanks.length;
+    const highest = Math.min(...effectiveRanks);
+    const lowest = Math.max(...effectiveRanks);
+    const rankStdDev = stddev(effectiveRanks);
+
+    const bestRankBiasScore =
+      0.6 * highest +
+      0.3 * avg +
+      0.1 * lowest +
+      0.2 * rankStdDev;
+
+    const preferredRows = [...group].sort((a, b) => {
+      const sourceWeight = (source: string): number => {
+        if (source === 'fangraphs') return 3;
+        if (source === 'mlb') return 2;
+        if (source === 'prospects_live') return 1;
+        return 0;
+      };
+
+      const weightDiff = sourceWeight(b.source) - sourceWeight(a.source);
+      if (weightDiff !== 0) return weightDiff;
+      return a.rank - b.rank;
+    });
+
+    const mergedPositions = Array.from(
+      new Set(
+        group
+          .flatMap((row) => row.positions)
+          .map((position) => position.trim().toUpperCase())
+          .filter(Boolean)
+      )
+    ).sort();
+
+    const selectTextField = (selector: (row: ProspectSourceRow) => string | null): string | null => {
+      for (const row of preferredRows) {
+        const value = selector(row);
+        if (value && value.trim().length > 0) {
+          return value;
+        }
+      }
+      return null;
+    };
+
+    const selectNumberField = (selector: (row: ProspectSourceRow) => number | null): number | null => {
+      for (const row of preferredRows) {
+        const value = selector(row);
+        if (value != null && Number.isFinite(value)) {
+          return value;
+        }
+      }
+      return null;
+    };
+
+    const ownership = ownerByNormName.get(normName);
+    const fantasyTeam = ownership?.fantasy_team ?? null;
+    const rostered =
+      fantasyTeam != null &&
+      !fantasyTeam.toLowerCase().includes('free agent') &&
+      !fantasyTeam.toLowerCase().includes('waiver');
+
+    const age = normalizeAge(selectNumberField((row) => row.age));
+    const eta = normalizeEta(selectTextField((row) => row.eta));
+    const level = normalizeLevel(selectTextField((row) => row.level));
+    const height = normalizeHeight(selectTextField((row) => row.height));
+    const weight = normalizeWeight(selectTextField((row) => row.weight));
+    const bats = normalizeBatThrow(selectTextField((row) => row.bats));
+    const throws = normalizeBatThrow(selectTextField((row) => row.throws));
+    const fv = normalizeDisplayText(selectTextField((row) => row.fv));
+    const ofp = normalizeDisplayText(selectTextField((row) => row.ofp));
+    const statsSummary = normalizeScoutingSnippet(selectTextField((row) => row.stats_summary), 280);
+    const scoutingReport = normalizeScoutingSnippet(selectTextField((row) => row.scouting_report), 900);
+    const notes = normalizeScoutingSnippet(selectTextField((row) => row.notes), 380);
+    const playerSummary = buildProspectSummary({
+      statsSummary,
+      notes,
+      scoutingReport,
+      fv,
+      ofp,
+      eta,
+      level,
+    });
+
+    rows.push({
+      player_name:
+        normalizeDisplayText(preferredRows[0]?.player_name ?? group[0].player_name) ??
+        preferredRows[0]?.player_name ??
+        group[0].player_name,
+      norm_name: normName,
+      organization: normalizeDisplayText(selectTextField((row) => row.org)),
+      positions: mergedPositions.join(', '),
+      is_rostered: rostered,
+      fantasy_team: fantasyTeam,
+      league_name: ownership?.league_name ?? null,
+      mlb_rank: mlbRank,
+      fangraphs_rank: fangraphsRank,
+      prospects_live_rank: prospectsLiveRank,
+      average_rank: toRounded(avg, 2),
+      highest_rank: highest,
+      lowest_rank: lowest,
+      stddev_rank: toRounded(rankStdDev, 2),
+      best_rank_bias_score: toRounded(bestRankBiasScore, 2),
+      age,
+      eta,
+      level,
+      height,
+      weight,
+      bats,
+      throws,
+      fv,
+      ofp,
+      player_summary: playerSummary,
+      stats_summary: statsSummary,
+      scouting_report: scoutingReport,
+      notes,
+    });
+  }
+
+  const teamFiltered =
+    selectedFantasyTeams.length > 0
+      ? rows.filter((row) => row.fantasy_team != null && selectedFantasyTeams.includes(row.fantasy_team))
+      : rows;
+
+  const positionFiltered =
+    selectedPositions.length > 0
+      ? teamFiltered.filter((row) => {
+          if (!row.positions) return false;
+          const rowPositions = row.positions
+            .split(',')
+            .map((position) => position.trim().toUpperCase())
+            .filter(Boolean);
+          return selectedPositions.some((position) => rowPositions.includes(position.toUpperCase()));
+        })
+      : teamFiltered;
+
+  const normalizedSearch = playerNameSearch ? normalizePlayerName(playerNameSearch) : '';
+  const searchFiltered = normalizedSearch
+    ? positionFiltered.filter((row) => normalizePlayerName(row.player_name).includes(normalizedSearch))
+    : positionFiltered;
+
+  const ageFiltered =
+    maxAge != null
+      ? searchFiltered.filter((row) => row.age != null && row.age <= maxAge)
+      : searchFiltered;
+
+  const rosterFiltered =
+    rosterFilter === 'rostered'
+      ? ageFiltered.filter((row) => row.is_rostered)
+      : rosterFilter === 'available'
+        ? ageFiltered.filter((row) => !row.is_rostered)
+        : ageFiltered;
+
+  return rosterFiltered
+    .sort((a, b) => {
+      if (a.best_rank_bias_score !== b.best_rank_bias_score) {
+        return a.best_rank_bias_score - b.best_rank_bias_score;
+      }
+      if (a.highest_rank !== b.highest_rank) {
+        return a.highest_rank - b.highest_rank;
+      }
+      if (a.average_rank !== b.average_rank) {
+        return a.average_rank - b.average_rank;
+      }
+      return a.player_name.localeCompare(b.player_name);
+    })
+    .slice(0, 50);
+}
+
+export async function queryProspects(
+  sourceRows: ProspectSourceRow[],
+  selectedLeague: string | null,
+  selectedFantasyTeams: string[],
+  selectedPositions: string[],
+  playerNameSearch?: string,
+  missingRankDefault = 125,
+  maxAge: number | null = null,
+  rosterFilter: 'all' | 'rostered' | 'available' = 'all'
+): Promise<ProspectRow[]> {
+  const db = await getDB();
+  const conn = await db.connect();
+
+  try {
+    let sql = 'SELECT league_name, fantasy_team, norm_name FROM yahoo';
+    if (selectedLeague) {
+      sql += ` WHERE league_name = '${escapeSQL(selectedLeague)}'`;
+    }
+
+    const result = await conn.query(sql);
+    const ownershipRows = result.toArray();
+    const ownerByNormName = new Map<
+      string,
+      { fantasy_team: string | null; league_name: string | null }
+    >();
+
+    for (const row of ownershipRows) {
+      const normName = (row.norm_name as string | null) ?? null;
+      if (!normName || ownerByNormName.has(normName)) continue;
+      ownerByNormName.set(normName, {
+        fantasy_team: (row.fantasy_team as string | null) ?? null,
+        league_name: (row.league_name as string | null) ?? null,
+      });
+    }
+
+    return buildProspectRows(sourceRows, ownerByNormName, {
+      selectedFantasyTeams,
+      selectedPositions,
+      playerNameSearch,
+      missingRankDefault,
+      maxAge,
+      rosterFilter,
+    });
+  } finally {
+    await conn.close();
+  }
 }
 
 export async function queryPitcherTrends(

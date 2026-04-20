@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { useIsMobile } from '@/lib/use-mobile';
 
 interface FilterBarProps {
-  mode: 'hitters' | 'pitchers' | 'relievers';
+  mode: 'hitters' | 'pitchers' | 'relievers' | 'prospects';
   filterOptions: FilterOptions;
   leagueFantasyTeams: string[];
   selectedLeague: string | null;
@@ -29,6 +29,14 @@ interface FilterBarProps {
   onPitcherTeamsChange: (values: string[]) => void;
   selectedReliefTeams: string[];
   onReliefTeamsChange: (values: string[]) => void;
+  selectedProspectTeams: string[];
+  onProspectTeamsChange: (values: string[]) => void;
+  selectedProspectMaxAge: number | null;
+  onProspectMaxAgeChange: (value: number | null) => void;
+  selectedProspectRosterFilter: 'all' | 'rostered' | 'available';
+  onProspectRosterFilterChange: (value: 'all' | 'rostered' | 'available') => void;
+  prospectAgeOptions: number[];
+  prospectPositions: string[];
   searchDraft: string;
   onSearchDraftChange: (value: string) => void;
   onSearchSubmit: () => void;
@@ -52,6 +60,14 @@ export function FilterBar({
   onPitcherTeamsChange,
   selectedReliefTeams,
   onReliefTeamsChange,
+  selectedProspectTeams,
+  onProspectTeamsChange,
+  selectedProspectMaxAge,
+  onProspectMaxAgeChange,
+  selectedProspectRosterFilter,
+  onProspectRosterFilterChange,
+  prospectAgeOptions,
+  prospectPositions,
   searchDraft,
   onSearchDraftChange,
   onSearchSubmit,
@@ -66,18 +82,23 @@ export function FilterBar({
       ? selectedTeams
       : mode === 'pitchers'
         ? selectedPitcherTeams
-        : selectedReliefTeams;
+        : mode === 'relievers'
+          ? selectedReliefTeams
+          : selectedProspectTeams;
   const hasDefaultRosterFocus =
     defaultRosterTeams.length > 0 &&
     activeTeamSelection.length === defaultRosterTeams.length &&
     defaultRosterTeams.every((team) => activeTeamSelection.includes(team));
 
   const activeFilterCount =
-    (selectedTeams.length > 0 ? 1 : 0) +
-    (selectedPositions.length > 0 ? 1 : 0) +
-    (timeWindow !== 'STD' ? 1 : 0) +
+    (activeTeamSelection.length > 0 ? 1 : 0) +
+    ((mode === 'hitters' || mode === 'prospects') && selectedPositions.length > 0 ? 1 : 0) +
+    (mode === 'hitters' && timeWindow !== 'STD' ? 1 : 0) +
+    (mode === 'prospects' && selectedProspectMaxAge != null ? 1 : 0) +
+    (mode === 'prospects' && selectedProspectRosterFilter !== 'all' ? 1 : 0) +
     ((mode === 'pitchers' && selectedPitcherTeams.length > 0) ||
-    (mode === 'relievers' && selectedReliefTeams.length > 0)
+    (mode === 'relievers' && selectedReliefTeams.length > 0) ||
+    (mode === 'prospects' && selectedProspectTeams.length > 0)
       ? 1
       : 0);
 
@@ -131,13 +152,13 @@ export function FilterBar({
             </div>
 
             {/* Fantasy Team multi-select */}
-            {mode === 'hitters' && (
+            {(mode === 'hitters' || mode === 'prospects') && (
               <div className="flex flex-col gap-1 w-full md:w-auto">
                 <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
                 <MultiSelect
                   options={leagueFantasyTeams}
-                  selected={selectedTeams}
-                  onChange={onTeamsChange}
+                  selected={mode === 'hitters' ? selectedTeams : selectedProspectTeams}
+                  onChange={mode === 'hitters' ? onTeamsChange : onProspectTeamsChange}
                   placeholder="All Teams"
                 />
                 {hasDefaultRosterFocus && (
@@ -149,15 +170,62 @@ export function FilterBar({
             )}
 
             {/* Position multi-select */}
-            {mode === 'hitters' && (
+            {(mode === 'hitters' || mode === 'prospects') && (
               <div className="flex flex-col gap-1 w-full md:w-auto">
                 <label className="text-xs font-medium text-muted-foreground">Position</label>
                 <MultiSelect
-                  options={filterOptions.positions.filter((p) => p !== 'SP' && p !== 'RP')}
+                  options={
+                    mode === 'hitters'
+                      ? filterOptions.positions.filter((p) => p !== 'SP' && p !== 'RP')
+                      : prospectPositions
+                  }
                   selected={selectedPositions}
                   onChange={onPositionsChange}
                   placeholder="All Positions"
                 />
+              </div>
+            )}
+
+            {mode === 'prospects' && (
+              <div className="flex flex-col gap-1 w-full md:w-[140px]">
+                <label className="text-xs font-medium text-muted-foreground">Rostered</label>
+                <Select
+                  value={selectedProspectRosterFilter}
+                  onValueChange={(value) =>
+                    onProspectRosterFilterChange(value as 'all' | 'rostered' | 'available')
+                  }
+                >
+                  <SelectTrigger className="w-full md:w-[140px]">
+                    <SelectValue placeholder="All" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="rostered">Rostered</SelectItem>
+                    <SelectItem value="available">Available</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {mode === 'prospects' && (
+              <div className="flex flex-col gap-1 w-full md:w-[140px]">
+                <label className="text-xs font-medium text-muted-foreground">Age ≤</label>
+                <Select
+                  value={selectedProspectMaxAge != null ? String(selectedProspectMaxAge) : 'any'}
+                  onValueChange={(value) => onProspectMaxAgeChange(value === 'any' ? null : Number(value))}
+                >
+                  <SelectTrigger className="w-full md:w-[120px]">
+                    <SelectValue placeholder="Any" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="any">Any</SelectItem>
+                    {prospectAgeOptions.map((age) => (
+                      <SelectItem key={age} value={String(age)}>
+                        {age}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
 
@@ -225,7 +293,9 @@ export function FilterBar({
                   ? 'Player Name'
                   : mode === 'pitchers'
                     ? 'Pitcher Name'
-                    : 'Reliever Name'}
+                    : mode === 'relievers'
+                      ? 'Reliever Name'
+                      : 'Prospect Name'}
               </label>
               <Input
                 value={searchDraft}
