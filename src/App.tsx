@@ -391,7 +391,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col h-dvh">
+    <div className="flex min-h-0 flex-col h-dvh overflow-hidden">
       <header className="px-3 py-2 md:px-4 md:py-3 border-b">
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2">

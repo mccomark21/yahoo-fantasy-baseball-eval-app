@@ -144,8 +144,8 @@ export function ReliefPitcherTable({ data, isLoading }: ReliefPitcherTableProps)
   }
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
-      <div className="overflow-auto flex-1">
+    <div className="flex min-h-0 flex-col flex-1 overflow-hidden">
+      <div className="min-h-0 overflow-auto flex-1">
         <Table>
           <TableHeader>
             <TableRow>

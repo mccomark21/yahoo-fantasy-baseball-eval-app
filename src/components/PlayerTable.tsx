@@ -468,7 +468,7 @@ export function PlayerTable({ data, isLoading, showMetricSparklines }: PlayerTab
 
   if (isMobile) {
     return (
-      <div className="flex flex-col flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-col flex-1 overflow-hidden">
         {/* Mobile sort control */}
         <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/30">
           <span className="text-xs text-muted-foreground shrink-0">Sort by</span>
@@ -507,7 +507,7 @@ export function PlayerTable({ data, isLoading, showMetricSparklines }: PlayerTab
         </div>
 
         {/* Card list */}
-        <div className="overflow-auto flex-1">
+        <div className="min-h-0 overflow-auto flex-1">
           {sortedRows.length > 0 ? (
             sortedRows.map((row, idx) => (
               <PlayerCard
@@ -531,8 +531,8 @@ export function PlayerTable({ data, isLoading, showMetricSparklines }: PlayerTab
   }
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
-      <div className="overflow-auto flex-1">
+    <div className="flex min-h-0 flex-col flex-1 overflow-hidden">
+      <div className="min-h-0 overflow-auto flex-1">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
