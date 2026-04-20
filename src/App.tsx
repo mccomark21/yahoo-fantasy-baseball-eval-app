@@ -18,7 +18,6 @@ import { FilterBar } from '@/components/FilterBar';
 import { PlayerTable } from '@/components/PlayerTable';
 import { PitcherTable } from '@/components/PitcherTable';
 import { ReliefPitcherTable } from '@/components/ReliefPitcherTable';
-import { AccuracyCohortPanel } from '@/components/AccuracyCohortPanel';
 import {
   fetchLatestPitcherList,
   fetchLatestReliefList,
@@ -43,6 +42,12 @@ function getReliefModeForLeague(leagueName: string | null): ReliefScoringMode {
 
   const match = RELIEF_MODE_BY_LEAGUE_NAME.find((entry) => entry.pattern.test(leagueName));
   return match?.mode ?? 'svhld';
+}
+
+function getDefaultRosterTeams(teams: string[]): string[] {
+  return teams.filter(
+    (team) => team.toLowerCase().includes('free agent') || team.toLowerCase().includes('waiver')
+  );
 }
 
 export default function App() {
@@ -122,15 +127,16 @@ export default function App() {
           const teams = await getFantasyTeamsForLeague(firstLeague);
           setLeagueFantasyTeams(teams);
 
-          const defaults = teams.filter(
-            (t) =>
-              t.toLowerCase().includes('free agent') ||
-              t.toLowerCase().includes('waiver')
-          );
+          const defaults = getDefaultRosterTeams(teams);
           if (defaults.length > 0) {
             setSelectedTeams(defaults);
             setSelectedPitcherTeams(defaults);
             setSelectedReliefTeams(defaults);
+            console.log(
+              `[filters:init] Applied default roster focus for ${firstLeague}: ${defaults.length}/${teams.length} teams`
+            );
+          } else {
+            console.log(`[filters:init] No default roster teams found for ${firstLeague}`);
           }
         }
         defaultsSet.current = true;
@@ -233,14 +239,17 @@ export default function App() {
     if (league) {
       const teams = await getFantasyTeamsForLeague(league);
       setLeagueFantasyTeams(teams);
-      const defaults = teams.filter(
-        (t) =>
-          t.toLowerCase().includes('free agent') ||
-          t.toLowerCase().includes('waiver')
-      );
+      const defaults = getDefaultRosterTeams(teams);
       setSelectedTeams(defaults.length > 0 ? defaults : []);
       setSelectedPitcherTeams(defaults.length > 0 ? defaults : []);
       setSelectedReliefTeams(defaults.length > 0 ? defaults : []);
+      if (defaults.length > 0) {
+        console.log(
+          `[filters:league] Applied default roster focus for ${league}: ${defaults.length}/${teams.length} teams`
+        );
+      } else {
+        console.log(`[filters:league] No default roster teams found for ${league}`);
+      }
     } else {
       setLeagueFantasyTeams([]);
       setSelectedTeams([]);
@@ -361,7 +370,6 @@ export default function App() {
         onSearchDraftChange={setSearchDraft}
         onSearchSubmit={() => setPlayerSearch(searchDraft.trim())}
       />
-      {viewMode === 'hitters' && <AccuracyCohortPanel selectedLeague={selectedLeague} />}
       {viewMode === 'hitters' ? (
         <PlayerTable
           data={players}

@@ -58,6 +58,19 @@ export function FilterBar({
 }: FilterBarProps) {
   const isMobile = useIsMobile();
   const [isOpen, setIsOpen] = useState(false);
+  const defaultRosterTeams = leagueFantasyTeams.filter(
+    (team) => team.toLowerCase().includes('free agent') || team.toLowerCase().includes('waiver')
+  );
+  const activeTeamSelection =
+    mode === 'hitters'
+      ? selectedTeams
+      : mode === 'pitchers'
+        ? selectedPitcherTeams
+        : selectedReliefTeams;
+  const hasDefaultRosterFocus =
+    defaultRosterTeams.length > 0 &&
+    activeTeamSelection.length === defaultRosterTeams.length &&
+    defaultRosterTeams.every((team) => activeTeamSelection.includes(team));
 
   const activeFilterCount =
     (selectedTeams.length > 0 ? 1 : 0) +
@@ -127,6 +140,11 @@ export function FilterBar({
                   onChange={onTeamsChange}
                   placeholder="All Teams"
                 />
+                {hasDefaultRosterFocus && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Default roster focus active (Free Agent/Waiver)
+                  </p>
+                )}
               </div>
             )}
 
@@ -153,6 +171,11 @@ export function FilterBar({
                   placeholder="All Teams"
                   selectAllLabel="Select All Teams"
                 />
+                {hasDefaultRosterFocus && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Default roster focus active (Free Agent/Waiver)
+                  </p>
+                )}
               </div>
             )}
 
@@ -166,6 +189,11 @@ export function FilterBar({
                   placeholder="All Teams"
                   selectAllLabel="Select All Teams"
                 />
+                {hasDefaultRosterFocus && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Default roster focus active (Free Agent/Waiver)
+                  </p>
+                )}
               </div>
             )}
 

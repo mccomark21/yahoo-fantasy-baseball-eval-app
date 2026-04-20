@@ -141,7 +141,7 @@ export async function loadData(): Promise<void> {
           CASE
             WHEN primary_position NOT IN ('SP', 'RP')
               THEN ROW_NUMBER() OVER (
-                PARTITION BY norm_name
+                PARTITION BY league_name, norm_name
                 ORDER BY source_row_num DESC
               )
             ELSE 1

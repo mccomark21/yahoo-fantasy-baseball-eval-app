@@ -47,6 +47,8 @@ The app joins Yahoo and PyBaseball data in-browser and enriches pitcher views wi
 
 The Yahoo and PyBaseball source files are fetched at startup and cached in **IndexedDB** with a 4-hour TTL to avoid redundant downloads on page reload.
 
+Yahoo hitter rows are deduplicated by player within each league (keeping the latest source row) so cross-league membership does not suppress league-specific hitter visibility.
+
 ## Build and Runtime API Behavior
 
 The app uses different ranking data behavior in local development versus production hosting:
@@ -71,7 +73,7 @@ The app uses different ranking data behavior in local development versus product
 - **Sortable data tables** — sort by any visible column
 - **Theme toggle** — light/dark theme persisted via local storage
 - **Responsive UI** — optimized for desktop and mobile usage
-- **Accuracy cohort tooling** — optional panel to build reproducible xwOBA validation cohorts
+- **Accuracy cohort testing** — background automated tests for reproducible xwOBA validation cohorts
 
 ### Hitter Metrics
 
