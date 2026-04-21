@@ -1,12 +1,10 @@
-name: Deploy to GitHub Pages
+name: Deploy Relief Rankings to GitHub Pages
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
   schedule:
-    # Tuesdays at 13:00 UTC (~9:00 AM ET during DST, ~8:00 AM ET in EST)
-    - cron: '0 13 * * 2'
+    # Fridays at 13:00 UTC (~9:00 AM ET during DST, ~8:00 AM ET in EST)
+    - cron: '0 13 * * 5'
 
 permissions:
   contents: read
@@ -14,7 +12,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages-starter
+  group: pages-relief
   cancel-in-progress: true
 
 jobs:
@@ -34,7 +32,7 @@ jobs:
       - run: npm ci
       - run: npm run build
         env:
-          RANKING_REFRESH_TARGET: pitcher
+          RANKING_REFRESH_TARGET: relief
 
       - uses: actions/configure-pages@v5
 

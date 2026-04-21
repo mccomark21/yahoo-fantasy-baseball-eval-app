@@ -13,9 +13,13 @@ const RELIEF_LIST_CATEGORY_URL_SVHLD =
 const MLB_PROSPECTS_URL = 'https://www.mlb.com/milb/prospects/top100/'
 const FANGRAPHS_PROSPECTS_URL = 'https://www.fangraphs.com/prospects/the-board'
 const PROSPECTS_LIVE_URL = 'https://www.prospectslive.com/2026-top-100-prospects/'
+const PRODUCTION_API_BASE_URL =
+  process.env.PRODUCTION_API_BASE_URL ??
+  'https://mccomark21.github.io/yahoo-fantasy-baseball-eval-app/api'
 
 type ReliefScoringMode = 'svhld' | 'saves'
 type ProspectSourceName = 'mlb' | 'fangraphs' | 'prospects_live'
+type SnapshotRefreshTarget = 'all' | 'pitcher' | 'relief'
 
 type TrendDirection = 'up' | 'down' | 'flat' | 'new' | 'unknown'
 
@@ -256,6 +260,90 @@ function toAbsoluteUrl(href: string): string {
   return new URL(href, 'https://pitcherlist.com').toString()
 }
 
+function getPathnameFromHref(href: string): string | null {
+  try {
+    return new URL(href, 'https://pitcherlist.com').pathname
+  } catch {
+    return null
+  }
+}
+
+function parseWeeklyArticleDate(pathname: string): { month: number; day: number } | null {
+  const lower = pathname.toLowerCase()
+  const dateMatch = lower.match(/-(\d{1,2})-(\d{1,2})-(?:week-\d+-rankings|update)\/?$/)
+  if (!dateMatch) {
+    return null
+  }
+
+  const month = Number.parseInt(dateMatch[1], 10)
+  const day = Number.parseInt(dateMatch[2], 10)
+  if (!Number.isFinite(month) || !Number.isFinite(day)) {
+    return null
+  }
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null
+  }
+
+  return { month, day }
+}
+
+function rankArticleCandidate(pathname: string): {
+  seasonYear: number
+  hasWeekRanking: boolean
+  weekNumber: number
+  month: number
+  day: number
+} {
+  const lower = pathname.toLowerCase()
+  const seasonYearMatch = lower.match(/top-100-starting-pitchers-for-(\d{4})-fantasy-baseball/)
+  const weekMatch = lower.match(/-week-(\d+)-rankings\/?$/)
+  const weekNumber = weekMatch ? Number.parseInt(weekMatch[1], 10) : 0
+  const articleDate = parseWeeklyArticleDate(lower)
+  const seasonYear = seasonYearMatch ? Number.parseInt(seasonYearMatch[1], 10) : 0
+
+  return {
+    seasonYear: Number.isFinite(seasonYear) ? seasonYear : 0,
+    hasWeekRanking: Boolean(weekMatch),
+    weekNumber: Number.isFinite(weekNumber) ? weekNumber : 0,
+    month: articleDate?.month ?? 0,
+    day: articleDate?.day ?? 0,
+  }
+}
+
+function compareArticleCandidates(a: string, b: string): number {
+  const aRank = rankArticleCandidate(a)
+  const bRank = rankArticleCandidate(b)
+
+  if (aRank.seasonYear !== bRank.seasonYear) {
+    return bRank.seasonYear - aRank.seasonYear
+  }
+
+  if (aRank.hasWeekRanking !== bRank.hasWeekRanking) {
+    return aRank.hasWeekRanking ? -1 : 1
+  }
+
+  if (aRank.weekNumber !== bRank.weekNumber) {
+    return bRank.weekNumber - aRank.weekNumber
+  }
+
+  if (aRank.month !== bRank.month) {
+    return bRank.month - aRank.month
+  }
+
+  if (aRank.day !== bRank.day) {
+    return bRank.day - aRank.day
+  }
+
+  return 0
+}
+
+function matchesArticlePattern(pathname: string, articlePattern: RegExp): boolean {
+  const flags = articlePattern.flags.replace(/g|y/g, '')
+  const safePattern = new RegExp(articlePattern.source, flags)
+  return safePattern.test(pathname)
+}
+
 function extractLatestArticleUrl(
   categoryHtml: string,
   articlePattern: RegExp,
@@ -266,15 +354,46 @@ function extractLatestArticleUrl(
     .map((_i, el) => $(el).attr('href') ?? '')
     .get()
 
-  const candidate = links.find((href) =>
-    articlePattern.test(href)
-  )
+  const rankedCandidates: Array<{ url: string; pathname: string; index: number }> = []
+  const seenPathnames = new Set<string>()
+
+  links.forEach((href, index) => {
+    const pathname = getPathnameFromHref(href)
+    if (!pathname) {
+      return
+    }
+
+    if (!matchesArticlePattern(pathname, articlePattern)) {
+      return
+    }
+
+    if (seenPathnames.has(pathname)) {
+      return
+    }
+    seenPathnames.add(pathname)
+
+    rankedCandidates.push({
+      url: toAbsoluteUrl(href),
+      pathname,
+      index,
+    })
+  })
+
+  rankedCandidates.sort((a, b) => {
+    const rankComparison = compareArticleCandidates(a.pathname, b.pathname)
+    if (rankComparison !== 0) {
+      return rankComparison
+    }
+    return a.index - b.index
+  })
+
+  const candidate = rankedCandidates[0]
 
   if (!candidate) {
     throw new Error(errorMessage)
   }
 
-  return toAbsoluteUrl(candidate)
+  return candidate.url
 }
 
 function parseRankingArticle(
@@ -484,6 +603,31 @@ async function fetchHtmlWithRetry(url: string): Promise<string> {
   }
 
   throw lastError ?? new Error(`Failed to fetch ${url}`)
+}
+
+function normalizeSnapshotRefreshTarget(value: string | undefined): SnapshotRefreshTarget {
+  const normalized = value?.trim().toLowerCase()
+  if (normalized === 'pitcher' || normalized === 'relief' || normalized === 'all') {
+    return normalized
+  }
+  return 'all'
+}
+
+function buildProductionSnapshotUrl(relativePath: string): string {
+  return new URL(relativePath, `${PRODUCTION_API_BASE_URL.replace(/\/?$/, '/')}`).toString()
+}
+
+async function fetchJsonSnapshot<T>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    headers: {
+      'user-agent': 'Mozilla/5.0 (compatible; yahoo-fantasy-eval-app/1.0)',
+      accept: 'application/json',
+    },
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to fetch snapshot ${url} (${response.status})`)
+  }
+  return (await response.json()) as T
 }
 
 function normalizePositionToken(token: string): string {
@@ -991,6 +1135,7 @@ function pitcherListApiPlugin(): Plugin {
         /\/top-100-starting-pitchers-for-[^/]+\/?$/i,
         'Unable to find latest starting pitcher rankings article URL'
       )
+      console.log(`[pitcher-list] selected article URL: ${latestArticleUrl}`)
       const articleHtml = await fetchHtml(latestArticleUrl)
       const payload = parsePitcherListArticle(latestArticleUrl, articleHtml)
       res.statusCode = 200
@@ -1045,6 +1190,7 @@ function reliefListApiPlugin(): Plugin {
         /\/fantasy-reliever-rankings-closers-holds-solds-[^/]+\/?$/i,
         'Unable to find latest reliever rankings article URL'
       )
+      console.log(`[relief-list] selected article URL: ${latestArticleUrl}`)
       const articleHtml = await fetchHtml(latestArticleUrl)
       const payload = parseReliefListArticle(latestArticleUrl, articleHtml, mode)
       res.statusCode = 200
@@ -1133,49 +1279,109 @@ function staticApiSnapshotPlugin(): Plugin {
       await mkdir(path.join(outputDir, 'relief-list'), { recursive: true })
       await mkdir(path.join(outputDir, 'prospects'), { recursive: true })
 
-      const pitcherCategoryHtml = await fetchHtml(PITCHER_LIST_CATEGORY_URL)
-      const pitcherArticleUrl = extractLatestArticleUrl(
-        pitcherCategoryHtml,
-        /\/top-100-starting-pitchers-for-[^/]+\/?$/i,
-        'Unable to find latest starting pitcher rankings article URL'
-      )
-      const pitcherArticleHtml = await fetchHtml(pitcherArticleUrl)
-      const pitcherPayload = parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
+      const refreshTarget = normalizeSnapshotRefreshTarget(process.env.RANKING_REFRESH_TARGET)
+      const refreshPitcher = refreshTarget !== 'relief'
+      const refreshRelief = refreshTarget !== 'pitcher'
+      const refreshProspects = refreshTarget !== 'relief'
 
-      await writeFile(
-        path.join(outputDir, 'pitcher-list', 'latest.json'),
-        JSON.stringify(pitcherPayload),
-        'utf8'
-      )
+      console.log(`[snapshot] refresh target: ${refreshTarget}`)
 
-      const reliefCategoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL_SVHLD)
-      const reliefArticleUrl = extractLatestArticleUrl(
-        reliefCategoryHtml,
-        /\/fantasy-reliever-rankings-closers-holds-solds-[^/]+\/?$/i,
-        'Unable to find latest reliever rankings article URL'
-      )
-      const reliefArticleHtml = await fetchHtml(reliefArticleUrl)
+      const writeJsonSnapshot = async (relativePath: string, payload: unknown): Promise<void> => {
+        await writeFile(path.join(outputDir, relativePath), JSON.stringify(payload), 'utf8')
+      }
 
-      const svhldPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld')
-      const savesPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves')
+      if (refreshPitcher) {
+        const pitcherCategoryHtml = await fetchHtml(PITCHER_LIST_CATEGORY_URL)
+        const pitcherArticleUrl = extractLatestArticleUrl(
+          pitcherCategoryHtml,
+          /\/top-100-starting-pitchers-for-[^/]+\/?$/i,
+          'Unable to find latest starting pitcher rankings article URL'
+        )
+        console.log(`[snapshot] selected pitcher article URL: ${pitcherArticleUrl}`)
+        const pitcherArticleHtml = await fetchHtml(pitcherArticleUrl)
+        const pitcherPayload = parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
+        await writeJsonSnapshot(path.join('pitcher-list', 'latest.json'), pitcherPayload)
+      } else {
+        const pitcherSnapshotUrl = buildProductionSnapshotUrl('pitcher-list/latest.json')
+        try {
+          const pitcherPayload = await fetchJsonSnapshot<PitcherListLatestResponse>(pitcherSnapshotUrl)
+          console.log(`[snapshot] reusing deployed pitcher snapshot: ${pitcherSnapshotUrl}`)
+          await writeJsonSnapshot(path.join('pitcher-list', 'latest.json'), pitcherPayload)
+        } catch (error) {
+          console.warn(
+            `[snapshot] fallback failed for pitcher snapshot (${pitcherSnapshotUrl}), scraping live instead: ${error instanceof Error ? error.message : String(error)}`
+          )
+          const pitcherCategoryHtml = await fetchHtml(PITCHER_LIST_CATEGORY_URL)
+          const pitcherArticleUrl = extractLatestArticleUrl(
+            pitcherCategoryHtml,
+            /\/top-100-starting-pitchers-for-[^/]+\/?$/i,
+            'Unable to find latest starting pitcher rankings article URL'
+          )
+          const pitcherArticleHtml = await fetchHtml(pitcherArticleUrl)
+          const pitcherPayload = parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
+          await writeJsonSnapshot(path.join('pitcher-list', 'latest.json'), pitcherPayload)
+        }
+      }
 
-      await writeFile(
-        path.join(outputDir, 'relief-list', 'latest.svhld.json'),
-        JSON.stringify(svhldPayload),
-        'utf8'
-      )
-      await writeFile(
-        path.join(outputDir, 'relief-list', 'latest.saves.json'),
-        JSON.stringify(savesPayload),
-        'utf8'
-      )
+      if (refreshRelief) {
+        const reliefCategoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL_SVHLD)
+        const reliefArticleUrl = extractLatestArticleUrl(
+          reliefCategoryHtml,
+          /\/fantasy-reliever-rankings-closers-holds-solds-[^/]+\/?$/i,
+          'Unable to find latest reliever rankings article URL'
+        )
+        console.log(`[snapshot] selected relief article URL: ${reliefArticleUrl}`)
+        const reliefArticleHtml = await fetchHtml(reliefArticleUrl)
+        const svhldPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld')
+        const savesPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves')
+        await writeJsonSnapshot(path.join('relief-list', 'latest.svhld.json'), svhldPayload)
+        await writeJsonSnapshot(path.join('relief-list', 'latest.saves.json'), savesPayload)
+      } else {
+        const svhldSnapshotUrl = buildProductionSnapshotUrl('relief-list/latest.svhld.json')
+        const savesSnapshotUrl = buildProductionSnapshotUrl('relief-list/latest.saves.json')
+        try {
+          const [svhldPayload, savesPayload] = await Promise.all([
+            fetchJsonSnapshot<ReliefListLatestResponse>(svhldSnapshotUrl),
+            fetchJsonSnapshot<ReliefListLatestResponse>(savesSnapshotUrl),
+          ])
+          console.log(`[snapshot] reusing deployed relief snapshots: ${svhldSnapshotUrl}, ${savesSnapshotUrl}`)
+          await writeJsonSnapshot(path.join('relief-list', 'latest.svhld.json'), svhldPayload)
+          await writeJsonSnapshot(path.join('relief-list', 'latest.saves.json'), savesPayload)
+        } catch (error) {
+          console.warn(
+            `[snapshot] fallback failed for relief snapshots, scraping live instead: ${error instanceof Error ? error.message : String(error)}`
+          )
+          const reliefCategoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL_SVHLD)
+          const reliefArticleUrl = extractLatestArticleUrl(
+            reliefCategoryHtml,
+            /\/fantasy-reliever-rankings-closers-holds-solds-[^/]+\/?$/i,
+            'Unable to find latest reliever rankings article URL'
+          )
+          const reliefArticleHtml = await fetchHtml(reliefArticleUrl)
+          const svhldPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld')
+          const savesPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves')
+          await writeJsonSnapshot(path.join('relief-list', 'latest.svhld.json'), svhldPayload)
+          await writeJsonSnapshot(path.join('relief-list', 'latest.saves.json'), savesPayload)
+        }
+      }
 
-      const prospectsPayload = await fetchLatestProspects()
-      await writeFile(
-        path.join(outputDir, 'prospects', 'latest.json'),
-        JSON.stringify(prospectsPayload),
-        'utf8'
-      )
+      if (refreshProspects) {
+        const prospectsPayload = await fetchLatestProspects()
+        await writeJsonSnapshot(path.join('prospects', 'latest.json'), prospectsPayload)
+      } else {
+        const prospectsSnapshotUrl = buildProductionSnapshotUrl('prospects/latest.json')
+        try {
+          const prospectsPayload = await fetchJsonSnapshot<ProspectsLatestResponse>(prospectsSnapshotUrl)
+          console.log(`[snapshot] reusing deployed prospects snapshot: ${prospectsSnapshotUrl}`)
+          await writeJsonSnapshot(path.join('prospects', 'latest.json'), prospectsPayload)
+        } catch (error) {
+          console.warn(
+            `[snapshot] fallback failed for prospects snapshot, scraping live instead: ${error instanceof Error ? error.message : String(error)}`
+          )
+          const prospectsPayload = await fetchLatestProspects()
+          await writeJsonSnapshot(path.join('prospects', 'latest.json'), prospectsPayload)
+        }
+      }
     },
   }
 }

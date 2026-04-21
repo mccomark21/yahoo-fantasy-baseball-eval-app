@@ -47,6 +47,8 @@ The app joins Yahoo and PyBaseball data in-browser and enriches pitcher views wi
 
 The Yahoo and PyBaseball source files are fetched at startup and cached in **IndexedDB** with a 4-hour TTL to avoid redundant downloads on page reload.
 
+Yahoo roster data is additionally constrained to same-local-day cache reuse, so manager moves are picked up daily even if the app is reloaded frequently throughout the day.
+
 Yahoo hitter rows are deduplicated by player within each league (keeping the latest source row) so cross-league membership does not suppress league-specific hitter visibility.
 
 ## Build and Runtime API Behavior
@@ -63,7 +65,14 @@ The app uses different ranking data behavior in local development versus product
 		- `dist/api/pitcher-list/latest.json`
 		- `dist/api/relief-list/latest.svhld.json`
 		- `dist/api/relief-list/latest.saves.json`
+		- `dist/api/prospects/latest.json`
 	- The client reads these static JSON assets in production (GitHub Pages compatible)
+
+### Scheduled Refresh Cadence (Production)
+
+- **Starting pitcher rankings** refresh weekly on Tuesday mornings (ET)
+- **Relief pitcher rankings** refresh weekly on Friday mornings (ET)
+- **Yahoo roster CSV data** refreshes daily in-app (same-local-day cache policy)
 
 ## Key Features
 
@@ -138,6 +147,13 @@ base: '/yahoo-fantasy-baseball-eval-app/'
 ```
 
 Because GitHub Pages is static hosting, ranking data is generated at build time into static JSON under `dist/api/*`. In local development, Vite middleware routes still provide live scraping.
+
+GitHub Actions uses two scheduled deploy workflows:
+
+- Tuesday schedule: deploy build with `RANKING_REFRESH_TARGET=pitcher`
+- Friday schedule: deploy build with `RANKING_REFRESH_TARGET=relief`
+
+During targeted refreshes, non-target snapshot files are carried forward from the currently deployed JSON assets so only the intended ranking source is refreshed.
 
 Push the built output (from `npm run build`) to the `gh-pages` branch or configure GitHub Actions to deploy automatically.
 

@@ -9,9 +9,31 @@ const CACHE_DB_NAME = 'fantasy-eval-cache';
 const CACHE_STORE = 'files';
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
+interface CachePolicy {
+  ttlMs: number;
+  requireSameLocalDay?: boolean;
+}
+
+const DEFAULT_CACHE_POLICY: CachePolicy = {
+  ttlMs: CACHE_TTL_MS,
+};
+
+const YAHOO_CACHE_POLICY: CachePolicy = {
+  ttlMs: CACHE_TTL_MS,
+  requireSameLocalDay: true,
+};
+
 interface CacheEntry {
   data: ArrayBuffer;
   timestamp: number;
+}
+
+function toLocalDayKey(timestamp: number): string {
+  const date = new Date(timestamp);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function openCacheDB(): Promise<IDBDatabase> {
@@ -25,7 +47,7 @@ function openCacheDB(): Promise<IDBDatabase> {
   });
 }
 
-async function getCached(key: string): Promise<ArrayBuffer | null> {
+async function getCached(key: string, policy: CachePolicy = DEFAULT_CACHE_POLICY): Promise<ArrayBuffer | null> {
   try {
     const cacheDB = await openCacheDB();
     return new Promise((resolve) => {
@@ -34,7 +56,13 @@ async function getCached(key: string): Promise<ArrayBuffer | null> {
       const req = store.get(key);
       req.onsuccess = () => {
         const entry = req.result as CacheEntry | undefined;
-        if (entry && Date.now() - entry.timestamp < CACHE_TTL_MS) {
+        const cacheIsFresh =
+          entry && Date.now() - entry.timestamp < policy.ttlMs;
+        const sameDayOrNotRequired =
+          !policy.requireSameLocalDay ||
+          (entry != null && toLocalDayKey(entry.timestamp) === toLocalDayKey(Date.now()));
+
+        if (entry && cacheIsFresh && sameDayOrNotRequired) {
           resolve(entry.data);
         } else {
           resolve(null);
@@ -58,8 +86,8 @@ async function setCache(key: string, data: ArrayBuffer): Promise<void> {
   }
 }
 
-async function fetchWithCache(url: string): Promise<Uint8Array> {
-  const cached = await getCached(url);
+async function fetchWithCache(url: string, policy: CachePolicy = DEFAULT_CACHE_POLICY): Promise<Uint8Array> {
+  const cached = await getCached(url, policy);
   if (cached) {
     console.log(`[cache hit] ${url}`);
     return new Uint8Array(cached);
@@ -104,7 +132,7 @@ export async function loadData(): Promise<void> {
   const db = await getDB();
 
   const [csvBytes, parquetBytes] = await Promise.all([
-    fetchWithCache(YAHOO_CSV_URL),
+    fetchWithCache(YAHOO_CSV_URL, YAHOO_CACHE_POLICY),
     fetchWithCache(PYBASEBALL_PARQUET_URL),
   ]);
 
