@@ -219,6 +219,10 @@ dist
 dist-ssr
 *.local
 
+# Local scratch and temporary exports
+tmp/
+tmp_*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
