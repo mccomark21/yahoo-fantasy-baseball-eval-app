@@ -46,8 +46,9 @@ A browser-based tool for evaluating **hitters, starting pitchers, relievers, and
   - `🔥` Hot — strong recent performance (see thresholds below)
   - `🧊` Ice — poor recent performance
   - `➖` Neutral — insufficient volume or performance within normal range
+	- Trend sorting is recency-weighted, so `L7` drives ordering more than `L14`, which drives ordering more than `L30`
   - **Hitter thresholds (OPS-based):** 🔥 OPS ≥ .900 | 🧊 OPS ≤ .550 (L7) / ≤ .600 (L14/L30) — min AB: 10 (L7), 30 (L14), 60 (L30)
-  - **Pitcher thresholds (composite score):** Score = `(2.50/ERA)×40 + (0.90/WHIP)×35 + (K9/9.0)×25` — 🔥 score ≥ 85 | 🧊 score ≤ 50 (L7) / ≤ 55 (L14/L30) — min IP: 5 (L7), 12 (L14), 25/12 (L30 fire/ice)
+	- **Pitcher thresholds (composite score):** Score = `(2.50/ERA)×40 + (0.90/WHIP)×35 + (K9/9.0)×25` — 🔥 score ≥ 85 | 🧊 score ≤ 50 (L7) / ≤ 55 (L14/L30) — min IP: 3 (L7), 6 (L14), 12/12 (L30 fire/ice)
 - Hover any trend cell for a per-window tooltip showing AB/OPS or IP/score
 - Roster status badge indicates whether the prospect is currently rostered in your league
 - Optional ranking columns toggle (MLB rank, FG rank, Prospects Live rank)

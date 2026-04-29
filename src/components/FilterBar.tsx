@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+﻿import { useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { TimeWindow, FilterOptions } from '@/lib/queries';
 import {
@@ -12,6 +12,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { MultiSelect } from '@/components/MultiSelect';
 import { Input } from '@/components/ui/input';
 import { useIsMobile } from '@/lib/use-mobile';
+import { getDefaultRosterTeams } from '@/lib/fantasy-teams';
 
 interface FilterBarProps {
   mode: 'hitters' | 'pitchers' | 'relievers' | 'prospects';
@@ -35,7 +36,10 @@ interface FilterBarProps {
   onProspectMaxAgeChange: (value: number | null) => void;
   selectedProspectRosterFilter: 'all' | 'rostered' | 'available';
   onProspectRosterFilterChange: (value: 'all' | 'rostered' | 'available') => void;
+  selectedProspectLevels: string[];
+  onProspectLevelsChange: (values: string[]) => void;
   prospectAgeOptions: number[];
+  prospectLevelOptions: string[];
   prospectPositions: string[];
   searchDraft: string;
   onSearchDraftChange: (value: string) => void;
@@ -66,7 +70,10 @@ export function FilterBar({
   onProspectMaxAgeChange,
   selectedProspectRosterFilter,
   onProspectRosterFilterChange,
+  selectedProspectLevels,
+  onProspectLevelsChange,
   prospectAgeOptions,
+  prospectLevelOptions,
   prospectPositions,
   searchDraft,
   onSearchDraftChange,
@@ -74,8 +81,9 @@ export function FilterBar({
 }: FilterBarProps) {
   const isMobile = useIsMobile();
   const [isOpen, setIsOpen] = useState(false);
-  const defaultRosterTeams = leagueFantasyTeams.filter(
-    (team) => team.toLowerCase().includes('free agent') || team.toLowerCase().includes('waiver')
+  const defaultRosterTeams = useMemo(
+    () => getDefaultRosterTeams(leagueFantasyTeams),
+    [leagueFantasyTeams]
   );
   const activeTeamSelection =
     mode === 'hitters'
@@ -96,6 +104,7 @@ export function FilterBar({
     (mode === 'hitters' && timeWindow !== 'STD' ? 1 : 0) +
     (mode === 'prospects' && selectedProspectMaxAge != null ? 1 : 0) +
     (mode === 'prospects' && selectedProspectRosterFilter !== 'all' ? 1 : 0) +
+    (mode === 'prospects' && selectedProspectLevels.length > 0 ? 1 : 0) +
     ((mode === 'pitchers' && selectedPitcherTeams.length > 0) ||
     (mode === 'relievers' && selectedReliefTeams.length > 0) ||
     (mode === 'prospects' && selectedProspectTeams.length > 0)
@@ -182,6 +191,18 @@ export function FilterBar({
                   selected={selectedPositions}
                   onChange={onPositionsChange}
                   placeholder="All Positions"
+                />
+              </div>
+            )}
+
+            {mode === 'prospects' && prospectLevelOptions.length > 0 && (
+              <div className="flex flex-col gap-1 w-full md:w-auto">
+                <label className="text-xs font-medium text-muted-foreground">Level</label>
+                <MultiSelect
+                  options={prospectLevelOptions}
+                  selected={selectedProspectLevels}
+                  onChange={onProspectLevelsChange}
+                  placeholder="All Levels"
                 />
               </div>
             )}

@@ -30,6 +30,7 @@ import { fetchLatestProspects, type ProspectSourceStatus } from '@/lib/prospects
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Toggle } from '@/components/ui/toggle';
 import { Moon, Sun } from 'lucide-react';
+import { getDefaultRosterTeams } from '@/lib/fantasy-teams';
 
 type AppStatus = 'loading' | 'ready' | 'error';
 type ThemeMode = 'light' | 'dark';
@@ -46,12 +47,6 @@ function getReliefModeForLeague(leagueName: string | null): ReliefScoringMode {
 
   const match = RELIEF_MODE_BY_LEAGUE_NAME.find((entry) => entry.pattern.test(leagueName));
   return match?.mode ?? 'svhld';
-}
-
-function getDefaultRosterTeams(teams: string[]): string[] {
-  return teams.filter(
-    (team) => team.toLowerCase().includes('free agent') || team.toLowerCase().includes('waiver')
-  );
 }
 
 export default function App() {
@@ -115,7 +110,9 @@ export default function App() {
   const [selectedProspectRosterFilter, setSelectedProspectRosterFilter] = useState<
     'all' | 'rostered' | 'available'
   >('all');
+  const [selectedProspectLevels, setSelectedProspectLevels] = useState<string[]>([]);
   const [prospectAgeOptions, setProspectAgeOptions] = useState<number[]>([]);
+  const [prospectLevelOptions, setProspectLevelOptions] = useState<string[]>([]);
   const [prospectPositions, setProspectPositions] = useState<string[]>([]);
   const [searchDraft, setSearchDraft] = useState('');
   const [playerSearch, setPlayerSearch] = useState('');
@@ -124,6 +121,26 @@ export default function App() {
   const reliefScoringMode = useMemo(
     () => getReliefModeForLeague(selectedLeague),
     [selectedLeague]
+  );
+  const applyDefaultTeamSelections = useCallback(
+    (league: string, teams: string[]) => {
+      const defaults = getDefaultRosterTeams(teams);
+      const nextTeamSelection = defaults.length > 0 ? defaults : [];
+
+      setSelectedTeams(nextTeamSelection);
+      setSelectedPitcherTeams(nextTeamSelection);
+      setSelectedReliefTeams(nextTeamSelection);
+      setSelectedProspectTeams([]);
+
+      if (defaults.length > 0) {
+        console.log(
+          `[filters:league] Applied default roster focus for ${league}: ${defaults.length}/${teams.length} teams`
+        );
+      } else {
+        console.log(`[filters:league] No default roster teams found for ${league}`);
+      }
+    },
+    []
   );
 
   useEffect(() => {
@@ -145,19 +162,7 @@ export default function App() {
 
           const teams = await getFantasyTeamsForLeague(firstLeague);
           setLeagueFantasyTeams(teams);
-
-          const defaults = getDefaultRosterTeams(teams);
-          if (defaults.length > 0) {
-            setSelectedTeams(defaults);
-            setSelectedPitcherTeams(defaults);
-            setSelectedReliefTeams(defaults);
-            setSelectedProspectTeams([]);
-            console.log(
-              `[filters:init] Applied default roster focus for ${firstLeague}: ${defaults.length}/${teams.length} teams`
-            );
-          } else {
-            console.log(`[filters:init] No default roster teams found for ${firstLeague}`);
-          }
+          applyDefaultTeamSelections(firstLeague, teams);
         }
         defaultsSet.current = true;
 
@@ -168,7 +173,7 @@ export default function App() {
         setStatus('error');
       }
     })();
-  }, []);
+  }, [applyDefaultTeamSelections]);
 
   const runQuery = useCallback(async () => {
     if (status !== 'ready') return;
@@ -270,9 +275,27 @@ export default function App() {
         playerSearch,
         125,
         selectedProspectMaxAge,
-        selectedProspectRosterFilter
+        selectedProspectRosterFilter,
+        selectedProspectLevels
       );
       setProspects(joined);
+
+      const LEVEL_ORDER = ['MLB', 'AAA', 'AA', 'A+', 'A', 'ROK'];
+      const levelOptions = Array.from(
+        new Set(
+          latest.rows
+            .map((row) => row.level?.trim().toUpperCase())
+            .filter((l): l is string => l != null && l.length > 0)
+        )
+      ).sort((a, b) => {
+        const ai = LEVEL_ORDER.indexOf(a);
+        const bi = LEVEL_ORDER.indexOf(b);
+        if (ai !== -1 && bi !== -1) return ai - bi;
+        if (ai !== -1) return -1;
+        if (bi !== -1) return 1;
+        return a.localeCompare(b);
+      });
+      setProspectLevelOptions(levelOptions);
 
       const positions = Array.from(
         new Set(
@@ -318,6 +341,7 @@ export default function App() {
     playerSearch,
     selectedProspectMaxAge,
     selectedProspectRosterFilter,
+    selectedProspectLevels,
   ]);
 
   const handleLeagueChange = useCallback(async (league: string | null) => {
@@ -325,18 +349,7 @@ export default function App() {
     if (league) {
       const teams = await getFantasyTeamsForLeague(league);
       setLeagueFantasyTeams(teams);
-      const defaults = getDefaultRosterTeams(teams);
-      setSelectedTeams(defaults.length > 0 ? defaults : []);
-      setSelectedPitcherTeams(defaults.length > 0 ? defaults : []);
-      setSelectedReliefTeams(defaults.length > 0 ? defaults : []);
-      setSelectedProspectTeams([]);
-      if (defaults.length > 0) {
-        console.log(
-          `[filters:league] Applied default roster focus for ${league}: ${defaults.length}/${teams.length} teams`
-        );
-      } else {
-        console.log(`[filters:league] No default roster teams found for ${league}`);
-      }
+      applyDefaultTeamSelections(league, teams);
     } else {
       setLeagueFantasyTeams([]);
       setSelectedTeams([]);
@@ -344,7 +357,7 @@ export default function App() {
       setSelectedReliefTeams([]);
       setSelectedProspectTeams([]);
     }
-  }, []);
+  }, [applyDefaultTeamSelections]);
 
   useEffect(() => {
     if (!defaultsSet.current) return;
@@ -474,7 +487,10 @@ export default function App() {
         onProspectMaxAgeChange={setSelectedProspectMaxAge}
         selectedProspectRosterFilter={selectedProspectRosterFilter}
         onProspectRosterFilterChange={setSelectedProspectRosterFilter}
+        selectedProspectLevels={selectedProspectLevels}
+        onProspectLevelsChange={setSelectedProspectLevels}
         prospectAgeOptions={prospectAgeOptions}
+        prospectLevelOptions={prospectLevelOptions}
         prospectPositions={prospectPositions}
         searchDraft={searchDraft}
         onSearchDraftChange={setSearchDraft}

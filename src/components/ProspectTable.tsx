@@ -39,7 +39,7 @@ type WindowEmoji = '🔥' | '🧊' | '➖';
 
 interface ProspectTrendSummary {
   emoji: string;
-  score: number;
+  sortScore: number;
   tooltip: string;
 }
 
@@ -71,7 +71,7 @@ function getProspectRole(row: ProspectRow): ProspectRole {
 
 // Volume thresholds (AB used as proxy for PA since minor league stats lack PA)
 const HITTER_MIN_AB: Record<'L7' | 'L14' | 'L30', number> = { L7: 10, L14: 30, L30: 60 };
-const PITCHER_FIRE_MIN_IP: Record<'L7' | 'L14' | 'L30', number> = { L7: 5, L14: 12, L30: 25 };
+const PITCHER_FIRE_MIN_IP: Record<'L7' | 'L14' | 'L30', number> = { L7: 3, L14: 6, L30: 12 };
 const PITCHER_ICE_MIN_IP: Record<'L7' | 'L14' | 'L30', number> = { L7: 5, L14: 12, L30: 12 };
 
 const HITTER_OPS_FIRE = 0.9;
@@ -79,6 +79,13 @@ const HITTER_OPS_ICE: Record<'L7' | 'L14' | 'L30', number> = { L7: 0.55, L14: 0.
 
 const PITCHER_SCORE_FIRE = 85;
 const PITCHER_SCORE_ICE: Record<'L7' | 'L14' | 'L30', number> = { L7: 50, L14: 55, L30: 55 };
+const TREND_SORT_WEIGHTS: Record<'L7' | 'L14' | 'L30', number> = { L7: 9, L14: 3, L30: 1 };
+
+function getTrendSortValue(emoji: WindowEmoji): number {
+  if (emoji === '🔥') return 1;
+  if (emoji === '🧊') return -1;
+  return 0;
+}
 
 function calcPitcherCompositeScore(era: number | null, whip: number | null, k9: number | null): number | null {
   if (era == null && whip == null && k9 == null) return null;
@@ -129,7 +136,10 @@ function getProspectTrendSummary(row: ProspectRow): ProspectTrendSummary {
     return getHitterWindowEmoji(stats, window); // hitter + unknown
   });
 
-  const score = emojis.reduce((acc, e) => acc + (e === '🔥' ? 1 : e === '🧊' ? -1 : 0), 0);
+  const sortScore = emojis.reduce(
+    (acc, emoji, index) => acc + getTrendSortValue(emoji) * TREND_SORT_WEIGHTS[windows[index]],
+    0
+  );
 
   const tooltipLines = windows.map((window, i) => {
     const stats = row.minor_league_stats[window];
@@ -147,7 +157,7 @@ function getProspectTrendSummary(row: ProspectRow): ProspectTrendSummary {
 
   return {
     emoji: emojis.join(' '),
-    score,
+    sortScore,
     tooltip,
   };
 }
@@ -155,7 +165,7 @@ function getProspectTrendSummary(row: ProspectRow): ProspectTrendSummary {
 function getSortValue(row: ProspectRow, key: ProspectSortKey): number | string {
   if (key === 'player_name') return row.player_name;
   if (key === 'fantasy_team') return row.fantasy_team ?? 'zzzz';
-  if (key === 'trend_score') return getProspectTrendSummary(row).score;
+  if (key === 'trend_score') return getProspectTrendSummary(row).sortScore;
   return row[key] ?? Number.POSITIVE_INFINITY;
 }
 
@@ -208,7 +218,7 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
       return;
     }
     setSortKey(key);
-    setSortDesc(false);
+    setSortDesc(key === 'trend_score');
   };
 
   const sortIcon = (key: ProspectSortKey) => {

@@ -856,6 +856,7 @@ interface ProspectOwnership {
 interface BuildProspectRowsOptions {
   selectedFantasyTeams: string[];
   selectedPositions: string[];
+  selectedLevels?: string[];
   playerNameSearch?: string;
   missingRankDefault?: number;
   maxAge?: number | null;
@@ -871,6 +872,7 @@ export function buildProspectRows(
   const {
     selectedFantasyTeams,
     selectedPositions,
+    selectedLevels = [],
     playerNameSearch,
     missingRankDefault = 125,
     maxAge = null,
@@ -1089,7 +1091,12 @@ export function buildProspectRows(
         ? ageFiltered.filter((row) => !row.is_rostered)
         : ageFiltered;
 
-  return rosterFiltered
+  const levelFiltered =
+    selectedLevels.length > 0
+      ? rosterFiltered.filter((row) => row.level != null && selectedLevels.includes(row.level))
+      : rosterFiltered;
+
+  return levelFiltered
     .sort((a, b) => {
       if (a.best_rank_bias_score !== b.best_rank_bias_score) {
         return a.best_rank_bias_score - b.best_rank_bias_score;
@@ -1240,7 +1247,8 @@ export async function queryProspects(
   playerNameSearch?: string,
   missingRankDefault = 125,
   maxAge: number | null = null,
-  rosterFilter: 'all' | 'rostered' | 'available' = 'all'
+  rosterFilter: 'all' | 'rostered' | 'available' = 'all',
+  selectedLevels: string[] = []
 ): Promise<ProspectRow[]> {
   const db = await getDB();
   const conn = await db.connect();
@@ -1276,6 +1284,7 @@ export async function queryProspects(
     return buildProspectRows(sourceRows, ownerByNormName, {
       selectedFantasyTeams,
       selectedPositions,
+      selectedLevels,
       playerNameSearch,
       missingRankDefault,
       maxAge,
