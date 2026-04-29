@@ -22,6 +22,7 @@ import type { ProspectRow, ProspectStatsWindow } from '@/lib/queries';
 type ProspectSortKey =
   | 'best_rank_bias_score'
   | 'player_name'
+  | 'trend_score'
   | 'average_rank'
   | 'highest_rank'
   | 'lowest_rank'
@@ -33,9 +34,143 @@ interface ProspectTableProps {
   isLoading: boolean;
 }
 
+const TREND_WINDOWS: ProspectStatsWindow[] = ['L30', 'L14', 'L7'];
+
+type TrendDirection = 'hot' | 'cold' | 'neutral';
+
+interface ProspectTrendSummary {
+  emoji: string;
+  score: number;
+  tooltip: string;
+}
+
+function ratioDelta(current: number | null, baseline: number | null): number | null {
+  if (current == null || baseline == null || baseline === 0) return null;
+  return (current - baseline) / Math.abs(baseline);
+}
+
+function getHitterWindowScore(row: ProspectRow, window: ProspectStatsWindow): number | null {
+  const std = row.minor_league_stats.STD;
+  const recent = row.minor_league_stats[window];
+
+  const opsDelta = ratioDelta(recent.ops, std.ops);
+  const avgDelta = ratioDelta(recent.avg, std.avg);
+  const stdHrRate = std.homeRuns != null && std.atBats != null && std.atBats > 0 ? std.homeRuns / std.atBats : null;
+  const recentHrRate =
+    recent.homeRuns != null && recent.atBats != null && recent.atBats > 0
+      ? recent.homeRuns / recent.atBats
+      : null;
+  const hrRateDelta = ratioDelta(recentHrRate, stdHrRate);
+
+  let score = 0;
+  let samples = 0;
+  if (opsDelta != null) {
+    score += 0.5 * opsDelta;
+    samples += 1;
+  }
+  if (avgDelta != null) {
+    score += 0.3 * avgDelta;
+    samples += 1;
+  }
+  if (hrRateDelta != null) {
+    score += 0.2 * hrRateDelta;
+    samples += 1;
+  }
+
+  if (samples === 0) return null;
+  return score;
+}
+
+function getPitcherWindowScore(row: ProspectRow, window: ProspectStatsWindow): number | null {
+  const std = row.minor_league_stats.STD;
+  const recent = row.minor_league_stats[window];
+
+  const eraDelta = ratioDelta(recent.era, std.era);
+  const whipDelta = ratioDelta(recent.whip, std.whip);
+  const k9Delta = ratioDelta(recent.strikeoutsPer9, std.strikeoutsPer9);
+
+  let score = 0;
+  let samples = 0;
+  if (eraDelta != null) {
+    score += -0.45 * eraDelta;
+    samples += 1;
+  }
+  if (whipDelta != null) {
+    score += -0.35 * whipDelta;
+    samples += 1;
+  }
+  if (k9Delta != null) {
+    score += 0.2 * k9Delta;
+    samples += 1;
+  }
+
+  if (samples === 0) return null;
+  return score;
+}
+
+function getWindowDirection(score: number | null): TrendDirection {
+  if (score == null) return 'neutral';
+  if (score >= 0.18) return 'hot';
+  if (score <= -0.18) return 'cold';
+  return 'neutral';
+}
+
+function getProspectTrendSummary(row: ProspectRow): ProspectTrendSummary {
+  let hotCount = 0;
+  let coldCount = 0;
+  let totalScore = 0;
+  let scoreSamples = 0;
+  const details: string[] = [];
+
+  for (const window of TREND_WINDOWS) {
+    const hitterScore = getHitterWindowScore(row, window);
+    const pitcherScore = getPitcherWindowScore(row, window);
+    const hasHitter = hitterScore != null;
+    const hasPitcher = pitcherScore != null;
+
+    let windowScore: number | null = null;
+    if (hasHitter && hasPitcher) {
+      windowScore = Math.abs(hitterScore) >= Math.abs(pitcherScore) ? hitterScore : pitcherScore;
+    } else {
+      windowScore = hitterScore ?? pitcherScore;
+    }
+
+    const trend = getWindowDirection(windowScore);
+
+    if (windowScore != null) {
+      totalScore += windowScore;
+      scoreSamples += 1;
+    }
+
+    if (trend === 'hot') hotCount += 1;
+    if (trend === 'cold') coldCount += 1;
+
+    if (trend === 'hot') details.push(`${window}: hot`);
+    if (trend === 'cold') details.push(`${window}: cold`);
+    if (trend === 'neutral') details.push(`${window}: neutral`);
+  }
+
+  const emoji =
+    hotCount === 0 && coldCount === 0
+      ? ''
+      : hotCount >= coldCount
+        ? '🔥'.repeat(hotCount)
+        : '🧊'.repeat(coldCount);
+
+  const avgScore = scoreSamples > 0 ? totalScore / scoreSamples : 0;
+  const tooltip = `Trend signal from L30, L14, L7 vs STD\n${details.join('\n')}`;
+
+  return {
+    emoji,
+    score: hotCount - coldCount + avgScore,
+    tooltip,
+  };
+}
+
 function getSortValue(row: ProspectRow, key: ProspectSortKey): number | string {
   if (key === 'player_name') return row.player_name;
   if (key === 'fantasy_team') return row.fantasy_team ?? 'zzzz';
+  if (key === 'trend_score') return getProspectTrendSummary(row).score;
   return row[key] ?? Number.POSITIVE_INFINITY;
 }
 
@@ -139,6 +274,7 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
             const isExpanded = expandedRows.has(rowKey);
             const rosterLabel = row.is_rostered ? 'Rostered' : 'Available';
             const stats = row.minor_league_stats[statsWindow];
+            const trend = getProspectTrendSummary(row);
 
             return (
               <div key={rowKey} className="border-b px-3 py-2.5">
@@ -151,7 +287,10 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                       aria-expanded={isExpanded}
                       aria-label={`Toggle details for ${row.player_name}`}
                     >
-                      <span className="font-medium truncate">{row.player_name}</span>
+                      <span className="font-medium truncate" title={trend.tooltip}>
+                        {row.player_name}
+                        {trend.emoji ? ` ${trend.emoji}` : ''}
+                      </span>
                       {isExpanded ? (
                         <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
                       ) : (
@@ -249,6 +388,9 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
               <TableHead className="cursor-pointer select-none" onClick={() => setSort('average_rank')}>
                 <div className="flex items-center gap-1">Avg Rank {sortIcon('average_rank')}</div>
               </TableHead>
+              <TableHead className="cursor-pointer select-none" onClick={() => setSort('trend_score')}>
+                <div className="flex items-center gap-1">Trend {sortIcon('trend_score')}</div>
+              </TableHead>
               {showRankingColumns && (
                 <>
                   <TableHead className="cursor-pointer select-none" onClick={() => setSort('highest_rank')}>
@@ -265,7 +407,6 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                   <TableHead>PLive</TableHead>
                 </>
               )}
-              <TableHead>Rostered</TableHead>
               <TableHead>AB / HR / AVG / OPS</TableHead>
               <TableHead>IP / ERA / WHIP / K/9</TableHead>
             </TableRow>
@@ -276,10 +417,13 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                 const stats = row.minor_league_stats[statsWindow];
                 const hasHitterStats = stats.atBats != null || stats.avg != null;
                 const hasPitcherStats = stats.inningsPitched != null || stats.era != null || stats.whip != null;
+                const trend = getProspectTrendSummary(row);
 
                 return (
                   <TableRow key={row.norm_name}>
-                    <TableCell className="font-medium">{row.player_name}</TableCell>
+                    <TableCell className="font-medium">
+                      {row.player_name}
+                    </TableCell>
                     <TableCell>{row.organization ?? '—'}</TableCell>
                     <TableCell>{row.positions || '—'}</TableCell>
                     <TableCell className="font-mono tabular-nums">{formatAge(row.age)}</TableCell>
@@ -287,6 +431,7 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                     <TableCell className="font-mono tabular-nums">{row.level ?? '—'}</TableCell>
                     <TableCell>{row.fantasy_team ?? 'Not Found'}</TableCell>
                     <TableCell className="font-mono tabular-nums font-semibold">{row.average_rank.toFixed(2)}</TableCell>
+                    <TableCell className="font-mono tabular-nums" title={trend.tooltip}>{trend.emoji || '—'}</TableCell>
                     {showRankingColumns && (
                       <>
                         <TableCell className="font-mono tabular-nums">{row.highest_rank}</TableCell>
@@ -297,13 +442,6 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                         <TableCell className="font-mono tabular-nums">{row.prospects_live_rank ?? '—'}</TableCell>
                       </>
                     )}
-                    <TableCell>
-                      <span
-                        className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${rosterBadgeClass(row.is_rostered)}`}
-                      >
-                        {row.is_rostered ? 'Yes' : 'No'}
-                      </span>
-                    </TableCell>
                     <TableCell className="font-mono tabular-nums text-sm">
                       {hasHitterStats ? (
                         <>
