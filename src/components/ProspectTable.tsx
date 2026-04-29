@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import type { ProspectRow, ProspectStatsWindow } from '@/lib/queries';
+import type { ProspectMinorLeagueStats, ProspectRow, ProspectStatsWindow } from '@/lib/queries';
 
 type ProspectSortKey =
   | 'best_rank_bias_score'
@@ -34,10 +34,8 @@ interface ProspectTableProps {
   isLoading: boolean;
 }
 
-const TREND_WINDOWS: ProspectStatsWindow[] = ['L30', 'L14', 'L7'];
-
-type TrendDirection = 'hot' | 'cold' | 'neutral';
 type ProspectRole = 'hitter' | 'pitcher' | 'two_way' | 'unknown';
+type WindowEmoji = '🔥' | '🧊' | '➖';
 
 interface ProspectTrendSummary {
   emoji: string;
@@ -71,160 +69,85 @@ function getProspectRole(row: ProspectRow): ProspectRole {
   return 'unknown';
 }
 
-function ratioDelta(current: number | null, baseline: number | null): number | null {
-  if (current == null || baseline == null || baseline === 0) return null;
-  return (current - baseline) / Math.abs(baseline);
-}
+// Volume thresholds (AB used as proxy for PA since minor league stats lack PA)
+const HITTER_MIN_AB: Record<'L7' | 'L14' | 'L30', number> = { L7: 10, L14: 30, L30: 60 };
+const PITCHER_FIRE_MIN_IP: Record<'L7' | 'L14' | 'L30', number> = { L7: 5, L14: 12, L30: 25 };
+const PITCHER_ICE_MIN_IP: Record<'L7' | 'L14' | 'L30', number> = { L7: 5, L14: 12, L30: 12 };
 
-function getHitterWindowScore(row: ProspectRow, window: ProspectStatsWindow): number | null {
-  const std = row.minor_league_stats.STD;
-  const recent = row.minor_league_stats[window];
+const HITTER_OPS_FIRE = 0.9;
+const HITTER_OPS_ICE: Record<'L7' | 'L14' | 'L30', number> = { L7: 0.55, L14: 0.6, L30: 0.6 };
 
-  const opsDelta = ratioDelta(recent.ops, std.ops);
-  const avgDelta = ratioDelta(recent.avg, std.avg);
-  const stdHrRate = std.homeRuns != null && std.atBats != null && std.atBats > 0 ? std.homeRuns / std.atBats : null;
-  const recentHrRate =
-    recent.homeRuns != null && recent.atBats != null && recent.atBats > 0
-      ? recent.homeRuns / recent.atBats
-      : null;
-  const hrRateDelta = ratioDelta(recentHrRate, stdHrRate);
+const PITCHER_SCORE_FIRE = 85;
+const PITCHER_SCORE_ICE: Record<'L7' | 'L14' | 'L30', number> = { L7: 50, L14: 55, L30: 55 };
 
+function calcPitcherCompositeScore(era: number | null, whip: number | null, k9: number | null): number | null {
+  if (era == null && whip == null && k9 == null) return null;
   let score = 0;
-  let samples = 0;
-  if (opsDelta != null) {
-    score += 0.5 * opsDelta;
-    samples += 1;
-  }
-  if (avgDelta != null) {
-    score += 0.3 * avgDelta;
-    samples += 1;
-  }
-  if (hrRateDelta != null) {
-    score += 0.2 * hrRateDelta;
-    samples += 1;
-  }
-
-  if (samples === 0) return null;
+  if (era != null && era > 0) score += (2.5 / era) * 40;
+  if (whip != null && whip > 0) score += (0.9 / whip) * 35;
+  if (k9 != null) score += (k9 / 9.0) * 25;
   return score;
 }
 
-function getPitcherWindowScore(row: ProspectRow, window: ProspectStatsWindow): number | null {
-  const std = row.minor_league_stats.STD;
-  const recent = row.minor_league_stats[window];
-
-  const eraDelta = ratioDelta(recent.era, std.era);
-  const whipDelta = ratioDelta(recent.whip, std.whip);
-  const k9Delta = ratioDelta(recent.strikeoutsPer9, std.strikeoutsPer9);
-
-  let score = 0;
-  let samples = 0;
-  if (eraDelta != null) {
-    score += -0.45 * eraDelta;
-    samples += 1;
-  }
-  if (whipDelta != null) {
-    score += -0.35 * whipDelta;
-    samples += 1;
-  }
-  if (k9Delta != null) {
-    score += 0.2 * k9Delta;
-    samples += 1;
-  }
-
-  if (samples === 0) return null;
-
-  // Absolute guardrails to avoid marking clearly poor run prevention windows as hot.
-  if (recent.era != null) {
-    if (recent.era >= 6) score -= 0.8;
-    else if (recent.era <= 3.5) score += 0.25;
-  }
-  if (recent.whip != null) {
-    if (recent.whip >= 1.6) score -= 0.6;
-    else if (recent.whip <= 1.2) score += 0.2;
-  }
-
-  return score;
+function getHitterWindowEmoji(stats: ProspectMinorLeagueStats, window: 'L7' | 'L14' | 'L30'): WindowEmoji {
+  const ab = stats.atBats;
+  const ops = stats.ops;
+  if (ab == null || ab < HITTER_MIN_AB[window] || ops == null) return '➖';
+  if (ops >= HITTER_OPS_FIRE) return '🔥';
+  if (ops <= HITTER_OPS_ICE[window]) return '🧊';
+  return '➖';
 }
 
-function getWindowDirection(score: number | null): TrendDirection {
-  if (score == null) return 'neutral';
-  if (score >= 0.18) return 'hot';
-  if (score <= -0.18) return 'cold';
-  return 'neutral';
+function getPitcherWindowEmoji(stats: ProspectMinorLeagueStats, window: 'L7' | 'L14' | 'L30'): WindowEmoji {
+  const ip = stats.inningsPitched;
+  if (ip == null) return '➖';
+  const score = calcPitcherCompositeScore(stats.era, stats.whip, stats.strikeoutsPer9);
+  if (score == null) return '➖';
+  if (ip >= PITCHER_FIRE_MIN_IP[window] && score >= PITCHER_SCORE_FIRE) return '🔥';
+  if (ip >= PITCHER_ICE_MIN_IP[window] && score <= PITCHER_SCORE_ICE[window]) return '🧊';
+  return '➖';
 }
 
-function applyHitterGuardrails(score: number | null, row: ProspectRow, window: ProspectStatsWindow): number | null {
-  if (score == null) return null;
-  const recent = row.minor_league_stats[window];
-  let adjusted = score;
-
-  if (recent.ops != null) {
-    if (recent.ops < 0.62) adjusted -= 0.55;
-    else if (recent.ops > 0.85) adjusted += 0.2;
-  }
-  if (recent.avg != null) {
-    if (recent.avg < 0.2) adjusted -= 0.35;
-    else if (recent.avg > 0.29) adjusted += 0.15;
-  }
-
-  return adjusted;
+function getTwoWayWindowEmoji(row: ProspectRow, window: 'L7' | 'L14' | 'L30'): WindowEmoji {
+  const stats = row.minor_league_stats[window];
+  const hitterEmoji = getHitterWindowEmoji(stats, window);
+  const pitcherEmoji = getPitcherWindowEmoji(stats, window);
+  // Fire takes precedence, then ice, then neutral
+  if (hitterEmoji === '🔥' || pitcherEmoji === '🔥') return '🔥';
+  if (hitterEmoji === '🧊' || pitcherEmoji === '🧊') return '🧊';
+  return '➖';
 }
 
 function getProspectTrendSummary(row: ProspectRow): ProspectTrendSummary {
-  let hotCount = 0;
-  let coldCount = 0;
-  let totalScore = 0;
-  let scoreSamples = 0;
-  const details: string[] = [];
   const role = getProspectRole(row);
+  const windows: Array<'L7' | 'L14' | 'L30'> = ['L7', 'L14', 'L30'];
 
-  for (const window of TREND_WINDOWS) {
-    const hitterScore = role === 'hitter' || role === 'two_way' || role === 'unknown'
-      ? applyHitterGuardrails(getHitterWindowScore(row, window), row, window)
-      : null;
-    const pitcherScore = role === 'pitcher' || role === 'two_way' || role === 'unknown'
-      ? getPitcherWindowScore(row, window)
-      : null;
-    const hasHitter = hitterScore != null;
-    const hasPitcher = pitcherScore != null;
+  const emojis = windows.map((window): WindowEmoji => {
+    const stats = row.minor_league_stats[window];
+    if (role === 'pitcher') return getPitcherWindowEmoji(stats, window);
+    if (role === 'two_way') return getTwoWayWindowEmoji(row, window);
+    return getHitterWindowEmoji(stats, window); // hitter + unknown
+  });
 
-    let windowScore: number | null = null;
-    if (hasHitter && hasPitcher) {
-      windowScore = Math.abs(hitterScore) >= Math.abs(pitcherScore) ? hitterScore : pitcherScore;
-    } else {
-      windowScore = hitterScore ?? pitcherScore;
+  const score = emojis.reduce((acc, e) => acc + (e === '🔥' ? 1 : e === '🧊' ? -1 : 0), 0);
+
+  const tooltipLines = windows.map((window, i) => {
+    const stats = row.minor_league_stats[window];
+    if (role === 'pitcher') {
+      const ip = stats.inningsPitched?.toFixed(1) ?? '—';
+      const s = calcPitcherCompositeScore(stats.era, stats.whip, stats.strikeoutsPer9);
+      return `${window}: ${emojis[i]}  IP ${ip}, score ${s != null ? s.toFixed(1) : '—'}`;
     }
+    const ab = stats.atBats?.toFixed(0) ?? '—';
+    const ops = stats.ops?.toFixed(3) ?? '—';
+    return `${window}: ${emojis[i]}  AB ${ab}, OPS ${ops}`;
+  });
 
-    const trend = getWindowDirection(windowScore);
-
-    if (windowScore != null) {
-      totalScore += windowScore;
-      scoreSamples += 1;
-    }
-
-    if (trend === 'hot') hotCount += 1;
-    if (trend === 'cold') coldCount += 1;
-
-    if (trend === 'hot') details.push(`${window}: hot`);
-    if (trend === 'cold') details.push(`${window}: cold`);
-    if (trend === 'neutral') details.push(`${window}: neutral`);
-  }
-
-  const emoji =
-    hotCount === 0 && coldCount === 0
-      ? ''
-      : hotCount > coldCount
-        ? '🔥'.repeat(hotCount)
-        : coldCount > hotCount
-          ? '🧊'.repeat(coldCount)
-          : '';
-
-  const avgScore = scoreSamples > 0 ? totalScore / scoreSamples : 0;
-  const tooltip = `Trend signal (${role.replace('_', '-')}) from L30, L14, L7 vs STD\n${details.join('\n')}`;
+  const tooltip = `Performance trend (${role.replace('_', '-')}) [L7] [L14] [L30]\n${tooltipLines.join('\n')}`;
 
   return {
-    emoji,
-    score: hotCount - coldCount + avgScore,
+    emoji: emojis.join(' '),
+    score,
     tooltip,
   };
 }

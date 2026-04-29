@@ -2,7 +2,7 @@
 
 **[Live App](https://mccomark21.github.io/yahoo-fantasy-baseball-eval-app/)**
 
-A browser-based tool for evaluating **hitters, starting pitchers, and relievers** across Yahoo Fantasy Baseball leagues. It blends Yahoo roster data, StatCast-derived batter metrics from [PyBaseball](https://github.com/jldbc/pybaseball), and [Pitcher List](https://pitcherlist.com/) rankings, all processed client-side with [DuckDB WASM](https://duckdb.org/docs/api/wasm/overview) and static assets.
+A browser-based tool for evaluating **hitters, starting pitchers, relievers, and prospects** across Yahoo Fantasy Baseball leagues. It blends Yahoo roster data, StatCast-derived batter metrics from [PyBaseball](https://github.com/jldbc/pybaseball), [Pitcher List](https://pitcherlist.com/) rankings, and multi-source minor league prospect data, all processed client-side with [DuckDB WASM](https://duckdb.org/docs/api/wasm/overview) and static assets.
 
 ![App Screenshot](docs/screenshot.png)
 
@@ -34,6 +34,23 @@ A browser-based tool for evaluating **hitters, starting pitchers, and relievers*
 	- `saves`
 - Scoring mode is inferred from league name (with `svhld` fallback when unmatched)
 - Displays rank movement and notes with league/team context
+
+### Prospects
+
+- Aggregates prospect rankings from MLB Pipeline, FanGraphs, and Prospects Live into a single consensus list
+- Displays average rank, highest/lowest rank, and rank standard deviation across sources
+- Bias-adjusted best-rank score surfaces prospects with strong high-end rankings
+- Shows minor league stats (AB, AVG, HR, IP, ERA, WHIP, K/9) in selectable windows: Season, L30, L14, L7
+- **Trend emoji indicators** show performance across three windows simultaneously:
+  - Display order: `[L7] [14] [L30]` — one emoji per window
+  - `🔥` Hot — strong recent performance (see thresholds below)
+  - `🧊` Ice — poor recent performance
+  - `➖` Neutral — insufficient volume or performance within normal range
+  - **Hitter thresholds (OPS-based):** 🔥 OPS ≥ .900 | 🧊 OPS ≤ .550 (L7) / ≤ .600 (L14/L30) — min AB: 10 (L7), 30 (L14), 60 (L30)
+  - **Pitcher thresholds (composite score):** Score = `(2.50/ERA)×40 + (0.90/WHIP)×35 + (K9/9.0)×25` — 🔥 score ≥ 85 | 🧊 score ≤ 50 (L7) / ≤ 55 (L14/L30) — min IP: 5 (L7), 12 (L14), 25/12 (L30 fire/ice)
+- Hover any trend cell for a per-window tooltip showing AB/OPS or IP/score
+- Roster status badge indicates whether the prospect is currently rostered in your league
+- Optional ranking columns toggle (MLB rank, FG rank, Prospects Live rank)
 
 ## Data Pipeline
 

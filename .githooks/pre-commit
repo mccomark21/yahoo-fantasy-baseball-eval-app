@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+# Warn if source files that typically require README updates are staged
+# but README.md is not.
+
+WATCHED_PATTERNS="src/App.tsx src/components/ src/lib/queries.ts package.json vite.config.ts"
+
+readme_staged=$(git diff --cached --name-only | grep -Fx "README.md")
+source_staged=""
+
+for pattern in $WATCHED_PATTERNS; do
+  if git diff --cached --name-only | grep -q "^$pattern"; then
+    source_staged="$pattern $source_staged"
+  fi
+done
+
+if [ -n "$source_staged" ] && [ -z "$readme_staged" ]; then
+  echo ""
+  echo "⚠️  README reminder: the following staged paths may require README.md updates:"
+  for pattern in $WATCHED_PATTERNS; do
+    if git diff --cached --name-only | grep -q "^$pattern"; then
+      echo "   • $pattern"
+    fi
+  done
+  echo ""
+  echo "   If no README changes are needed, commit with:  git commit --no-verify"
+  echo ""
+  exit 1
+fi
+
+exit 0
