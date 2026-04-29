@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -9,7 +9,15 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useIsMobile } from '@/lib/use-mobile';
-import type { ProspectRow } from '@/lib/queries';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
+import type { ProspectRow, ProspectStatsWindow } from '@/lib/queries';
 
 type ProspectSortKey =
   | 'best_rank_bias_score'
@@ -43,11 +51,19 @@ function formatAge(value: number | null): string {
   return value.toFixed(1);
 }
 
+function formatNum(value: number | null, digits = 2): string {
+  if (value == null) return '—';
+  if (Number.isNaN(value)) return '—';
+  return value.toFixed(digits);
+}
+
 export function ProspectTable({ data, isLoading }: ProspectTableProps) {
   const isMobile = useIsMobile();
   const [sortKey, setSortKey] = useState<ProspectSortKey>('best_rank_bias_score');
   const [sortDesc, setSortDesc] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [showRankingColumns, setShowRankingColumns] = useState(false);
+  const [statsWindow, setStatsWindow] = useState<ProspectStatsWindow>('STD');
 
   const sortedData = useMemo(() => {
     const rows = [...data];
@@ -99,11 +115,30 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
   if (isMobile) {
     return (
       <div className="flex flex-col flex-1 overflow-auto">
+        {/* Mobile toolbar */}
+        <div className="border-b bg-background p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Stats Window:</span>
+            <Select value={statsWindow} onValueChange={(value) => setStatsWindow(value as ProspectStatsWindow)}>
+              <SelectTrigger className="h-8 w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="STD">Season</SelectItem>
+                <SelectItem value="L30">L30</SelectItem>
+                <SelectItem value="L14">L14</SelectItem>
+                <SelectItem value="L7">L7</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
         {sortedData.length > 0 ? (
           sortedData.map((row, index) => {
             const rowKey = `${row.norm_name}-${index}`;
             const isExpanded = expandedRows.has(rowKey);
             const rosterLabel = row.is_rostered ? 'Rostered' : 'Available';
+            const stats = row.minor_league_stats[statsWindow];
 
             return (
               <div key={rowKey} className="border-b px-3 py-2.5">
@@ -143,6 +178,11 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                     <div>High/Low/StdDev: {row.highest_rank} / {row.lowest_rank} / {row.stddev_rank.toFixed(2)}</div>
                     <div>HT/WT: {row.height ?? '—'} / {row.weight ?? '—'}</div>
                     <div>B/T: {row.bats ?? '—'} / {row.throws ?? '—'} · FV/OFP: {row.fv ?? '—'} / {row.ofp ?? '—'}</div>
+                    <div className="pt-1 border-t mt-2">
+                      <div className="font-semibold mb-1">Minor League Stats ({statsWindow})</div>
+                      {stats.atBats != null && <div>AB: {formatNum(stats.atBats, 0)} · AVG: {formatNum(stats.avg, 3)} · HR: {formatNum(stats.homeRuns, 0)}</div>}
+                      {stats.era != null && <div>IP: {formatNum(stats.inningsPitched, 1)} · ERA: {formatNum(stats.era, 2)} · WHIP: {formatNum(stats.whip, 2)} · K/9: {formatNum(stats.strikeoutsPer9, 1)}</div>}
+                    </div>
                     {row.player_summary ? <div>Summary: {row.player_summary}</div> : null}
                   </div>
                 ) : null}
@@ -158,6 +198,39 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
 
   return (
     <div className="flex min-h-0 flex-col flex-1 overflow-hidden">
+      {/* Desktop toolbar */}
+      <div className="border-b bg-background px-4 py-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowRankingColumns(!showRankingColumns)}
+            className="gap-2"
+          >
+            {showRankingColumns ? (
+              <Eye className="h-4 w-4" />
+            ) : (
+              <EyeOff className="h-4 w-4" />
+            )}
+            {showRankingColumns ? 'Hide' : 'Show'} Rankings
+          </Button>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-muted-foreground">Stats Window:</span>
+          <Select value={statsWindow} onValueChange={(value) => setStatsWindow(value as ProspectStatsWindow)}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="STD">Season to Date</SelectItem>
+              <SelectItem value="L30">Last 30 Days</SelectItem>
+              <SelectItem value="L14">Last 14 Days</SelectItem>
+              <SelectItem value="L7">Last 7 Days</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
       <div className="min-h-0 overflow-auto flex-1">
         <Table>
           <TableHeader>
@@ -174,65 +247,87 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                 <div className="flex items-center gap-1">Fantasy Team {sortIcon('fantasy_team')}</div>
               </TableHead>
               <TableHead className="cursor-pointer select-none" onClick={() => setSort('average_rank')}>
-                <div className="flex items-center gap-1">Avg {sortIcon('average_rank')}</div>
+                <div className="flex items-center gap-1">Avg Rank {sortIcon('average_rank')}</div>
               </TableHead>
-              <TableHead className="cursor-pointer select-none" onClick={() => setSort('highest_rank')}>
-                <div className="flex items-center gap-1">High {sortIcon('highest_rank')}</div>
-              </TableHead>
-              <TableHead className="cursor-pointer select-none" onClick={() => setSort('lowest_rank')}>
-                <div className="flex items-center gap-1">Low {sortIcon('lowest_rank')}</div>
-              </TableHead>
-              <TableHead className="cursor-pointer select-none" onClick={() => setSort('stddev_rank')}>
-                <div className="flex items-center gap-1">StdDev {sortIcon('stddev_rank')}</div>
-              </TableHead>
-              <TableHead>MLB</TableHead>
-              <TableHead>FG</TableHead>
-              <TableHead>PLive</TableHead>
+              {showRankingColumns && (
+                <>
+                  <TableHead className="cursor-pointer select-none" onClick={() => setSort('highest_rank')}>
+                    <div className="flex items-center gap-1">High {sortIcon('highest_rank')}</div>
+                  </TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => setSort('lowest_rank')}>
+                    <div className="flex items-center gap-1">Low {sortIcon('lowest_rank')}</div>
+                  </TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => setSort('stddev_rank')}>
+                    <div className="flex items-center gap-1">StdDev {sortIcon('stddev_rank')}</div>
+                  </TableHead>
+                  <TableHead>MLB</TableHead>
+                  <TableHead>FG</TableHead>
+                  <TableHead>PLive</TableHead>
+                </>
+              )}
               <TableHead>Rostered</TableHead>
-              <TableHead>Meta</TableHead>
+              <TableHead>AB / HR / AVG / OPS</TableHead>
+              <TableHead>IP / ERA / WHIP / K/9</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {sortedData.length > 0 ? (
-              sortedData.map((row) => (
-                <TableRow key={row.norm_name}>
-                  <TableCell className="font-medium">{row.player_name}</TableCell>
-                  <TableCell>{row.organization ?? '—'}</TableCell>
-                  <TableCell>{row.positions || '—'}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{formatAge(row.age)}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{row.eta ?? '—'}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{row.level ?? '—'}</TableCell>
-                  <TableCell>{row.fantasy_team ?? 'Not Found'}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{row.average_rank.toFixed(2)}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{row.highest_rank}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{row.lowest_rank}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{row.stddev_rank.toFixed(2)}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{row.mlb_rank ?? '—'}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{row.fangraphs_rank ?? '—'}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{row.prospects_live_rank ?? '—'}</TableCell>
-                  <TableCell>
-                    <span
-                      className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${rosterBadgeClass(row.is_rostered)}`}
-                    >
-                      {row.is_rostered ? 'Yes' : 'No'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="max-w-md text-xs leading-5 text-muted-foreground whitespace-normal">
-                    HT/WT {row.height ?? '—'} / {row.weight ?? '—'}
-                    <br />
-                    B/T {row.bats ?? '—'}/{row.throws ?? '—'} · FV/OFP {row.fv ?? '—'}/{row.ofp ?? '—'}
-                    {row.player_summary ? (
+              sortedData.map((row) => {
+                const stats = row.minor_league_stats[statsWindow];
+                const hasHitterStats = stats.atBats != null || stats.avg != null;
+                const hasPitcherStats = stats.inningsPitched != null || stats.era != null || stats.whip != null;
+
+                return (
+                  <TableRow key={row.norm_name}>
+                    <TableCell className="font-medium">{row.player_name}</TableCell>
+                    <TableCell>{row.organization ?? '—'}</TableCell>
+                    <TableCell>{row.positions || '—'}</TableCell>
+                    <TableCell className="font-mono tabular-nums">{formatAge(row.age)}</TableCell>
+                    <TableCell className="font-mono tabular-nums">{row.eta ?? '—'}</TableCell>
+                    <TableCell className="font-mono tabular-nums">{row.level ?? '—'}</TableCell>
+                    <TableCell>{row.fantasy_team ?? 'Not Found'}</TableCell>
+                    <TableCell className="font-mono tabular-nums font-semibold">{row.average_rank.toFixed(2)}</TableCell>
+                    {showRankingColumns && (
                       <>
-                        <br />
-                        Summary: {row.player_summary}
+                        <TableCell className="font-mono tabular-nums">{row.highest_rank}</TableCell>
+                        <TableCell className="font-mono tabular-nums">{row.lowest_rank}</TableCell>
+                        <TableCell className="font-mono tabular-nums">{row.stddev_rank.toFixed(2)}</TableCell>
+                        <TableCell className="font-mono tabular-nums">{row.mlb_rank ?? '—'}</TableCell>
+                        <TableCell className="font-mono tabular-nums">{row.fangraphs_rank ?? '—'}</TableCell>
+                        <TableCell className="font-mono tabular-nums">{row.prospects_live_rank ?? '—'}</TableCell>
                       </>
-                    ) : null}
-                  </TableCell>
-                </TableRow>
-              ))
+                    )}
+                    <TableCell>
+                      <span
+                        className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${rosterBadgeClass(row.is_rostered)}`}
+                      >
+                        {row.is_rostered ? 'Yes' : 'No'}
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-mono tabular-nums text-sm">
+                      {hasHitterStats ? (
+                        <>
+                          {formatNum(stats.atBats, 0)} / {formatNum(stats.homeRuns, 0)} / {formatNum(stats.avg, 3)} / {formatNum(stats.ops, 3)}
+                        </>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono tabular-nums text-sm">
+                      {hasPitcherStats ? (
+                        <>
+                          {formatNum(stats.inningsPitched, 1)} / {formatNum(stats.era, 2)} / {formatNum(stats.whip, 2)} / {formatNum(stats.strikeoutsPer9, 1)}
+                        </>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             ) : (
               <TableRow>
-                <TableCell colSpan={16} className="h-24 text-center text-muted-foreground">No results.</TableCell>
+                <TableCell colSpan={showRankingColumns ? 17 : 11} className="h-24 text-center text-muted-foreground">No results.</TableCell>
               </TableRow>
             )}
           </TableBody>

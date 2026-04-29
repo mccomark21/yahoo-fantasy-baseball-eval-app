@@ -4,6 +4,8 @@ const YAHOO_CSV_URL =
   'https://raw.githubusercontent.com/mccomark21/yahoo-fantasy-data-hub/main/data/fantasy_baseball_latest.csv';
 const PYBASEBALL_PARQUET_URL =
   'https://raw.githubusercontent.com/mccomark21/pybaseball-data-hub/main/data/processed/batter_game_log_enriched.parquet';
+const PROSPECTS_SNAPSHOT_PARQUET_URL =
+  'https://raw.githubusercontent.com/mccomark21/pybaseball-data-hub/main/data/processed/prospects_snapshot.parquet?v=20260428';
 
 const CACHE_DB_NAME = 'fantasy-eval-cache';
 const CACHE_STORE = 'files';
@@ -131,13 +133,15 @@ function buildAliasCase(inputExpr: string): string {
 export async function loadData(): Promise<void> {
   const db = await getDB();
 
-  const [csvBytes, parquetBytes] = await Promise.all([
+  const [csvBytes, parquetBytes, prospectsBytes] = await Promise.all([
     fetchWithCache(YAHOO_CSV_URL, YAHOO_CACHE_POLICY),
     fetchWithCache(PYBASEBALL_PARQUET_URL),
+    fetchWithCache(PROSPECTS_SNAPSHOT_PARQUET_URL),
   ]);
 
   await db.registerFileBuffer('yahoo.csv', csvBytes);
   await db.registerFileBuffer('game_logs.parquet', parquetBytes);
+  await db.registerFileBuffer('prospects_snapshot.parquet', prospectsBytes);
 
   const conn = await db.connect();
   try {
@@ -198,11 +202,18 @@ export async function loadData(): Promise<void> {
       FROM read_parquet('game_logs.parquet')
     `);
 
+    await conn.query(`
+      CREATE OR REPLACE TABLE prospects AS
+      SELECT *
+      FROM read_parquet('prospects_snapshot.parquet')
+    `);
+
     // Verify tables loaded
     const yahooCount = await conn.query('SELECT COUNT(*) as cnt FROM yahoo');
     const logsCount = await conn.query('SELECT COUNT(*) as cnt FROM game_logs');
+    const prospectsCount = await conn.query('SELECT COUNT(*) as cnt FROM prospects');
     console.log(
-      `[data] yahoo: ${yahooCount.toArray()[0].cnt} rows, game_logs: ${logsCount.toArray()[0].cnt} rows`
+      `[data] yahoo: ${yahooCount.toArray()[0].cnt} rows, game_logs: ${logsCount.toArray()[0].cnt} rows, prospects: ${prospectsCount.toArray()[0].cnt} rows`
     );
 
     // Diagnostic: log Yahoo batters with no game-log match

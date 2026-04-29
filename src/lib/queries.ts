@@ -3,6 +3,28 @@ import type { PitcherListRankRow, ReliefListRankRow, TrendDirection } from './pi
 import type { ProspectSourceRow } from './prospects-client';
 
 export type TimeWindow = 'STD' | '7D' | '14D' | '30D';
+export type ProspectStatsWindow = 'STD' | 'L7' | 'L14' | 'L30';
+
+export interface ProspectMinorLeagueStats {
+  atBats: number | null;
+  avg: number | null;
+  homeRuns: number | null;
+  rbi: number | null;
+  runs: number | null;
+  stolenBases: number | null;
+  strikeOuts: number | null;
+  ops: number | null;
+  obp: number | null;
+  slg: number | null;
+  era: number | null;
+  whip: number | null;
+  strikeoutsPer9: number | null;
+  walksPer9: number | null;
+  wins: number | null;
+  saves: number | null;
+  holds: number | null;
+  inningsPitched: number | null;
+}
 
 export interface PlayerRow {
   player_name: string;
@@ -81,6 +103,7 @@ export interface ProspectRow {
   stats_summary: string | null;
   scouting_report: string | null;
   notes: string | null;
+  minor_league_stats: Record<ProspectStatsWindow, ProspectMinorLeagueStats>;
 }
 
 const VOLUME_THRESHOLD_PCT = 0.5;
@@ -837,6 +860,7 @@ interface BuildProspectRowsOptions {
   missingRankDefault?: number;
   maxAge?: number | null;
   rosterFilter?: 'all' | 'rostered' | 'available';
+  minorLeagueStatsByNormName?: Map<string, Record<ProspectStatsWindow, ProspectMinorLeagueStats>>;
 }
 
 export function buildProspectRows(
@@ -851,6 +875,7 @@ export function buildProspectRows(
     missingRankDefault = 125,
     maxAge = null,
     rosterFilter = 'all',
+    minorLeagueStatsByNormName = new Map(),
   } = options;
 
   const grouped = new Map<string, ProspectSourceRow[]>();
@@ -966,6 +991,34 @@ export function buildProspectRows(
       level,
     });
 
+    const defaultStats: ProspectMinorLeagueStats = {
+      atBats: null,
+      avg: null,
+      homeRuns: null,
+      rbi: null,
+      runs: null,
+      stolenBases: null,
+      strikeOuts: null,
+      ops: null,
+      obp: null,
+      slg: null,
+      era: null,
+      whip: null,
+      strikeoutsPer9: null,
+      walksPer9: null,
+      wins: null,
+      saves: null,
+      holds: null,
+      inningsPitched: null,
+    };
+
+    const minorLeagueStats = minorLeagueStatsByNormName.get(normName) ?? {
+      STD: defaultStats,
+      L7: defaultStats,
+      L14: defaultStats,
+      L30: defaultStats,
+    };
+
     rows.push({
       player_name:
         normalizeDisplayText(preferredRows[0]?.player_name ?? group[0].player_name) ??
@@ -998,6 +1051,7 @@ export function buildProspectRows(
       stats_summary: statsSummary,
       scouting_report: scoutingReport,
       notes,
+      minor_league_stats: minorLeagueStats,
     });
   }
 
@@ -1051,6 +1105,133 @@ export function buildProspectRows(
     .slice(0, 50);
 }
 
+async function loadMinorLeagueStats(
+  conn: Awaited<ReturnType<Awaited<ReturnType<typeof getDB>>['connect']>>,
+  normNames: string[]
+): Promise<Map<string, Record<ProspectStatsWindow, ProspectMinorLeagueStats>>> {
+  if (normNames.length === 0) {
+    return new Map();
+  }
+
+  const normNameSet = new Set(normNames);
+  const normalizeProspectWindow = (value: string | null): ProspectStatsWindow | null => {
+    if (!value) return null;
+    const normalized = value.toUpperCase();
+    if (normalized === 'STD') return 'STD';
+    if (normalized === '7D' || normalized === 'L7') return 'L7';
+    if (normalized === '14D' || normalized === 'L14') return 'L14';
+    if (normalized === '30D' || normalized === 'L30') return 'L30';
+    return null;
+  };
+
+   try {
+     // Query prospects table, calculating norm_name on the fly
+     const sql = `
+       SELECT
+         player_name,
+         "window" AS stats_window,
+         atBats,
+         avg,
+         homeRuns,
+         rbi,
+         runs,
+         stolenBases,
+         strikeOuts,
+         ops,
+         obp,
+         slg,
+         era,
+         whip,
+         strikeoutsPer9Inn,
+         walksPer9Inn,
+         wins,
+         saves,
+         holds,
+         inningsPitched
+       FROM prospects
+       WHERE "window" IS NOT NULL
+     `;
+
+    const result = await conn.query(sql);
+    const byNormName = new Map<string, Record<ProspectStatsWindow, ProspectMinorLeagueStats>>();
+
+    for (const row of result.toArray()) {
+      const playerName = row.player_name as string | null;
+      const window = normalizeProspectWindow((row.stats_window as string | null) ?? null);
+
+      if (!playerName || !window) continue;
+      const normName = normalizePlayerName(playerName);
+      if (!normName || !normNameSet.has(normName)) continue;
+
+      const defaultStats: ProspectMinorLeagueStats = {
+        atBats: null,
+        avg: null,
+        homeRuns: null,
+        rbi: null,
+        runs: null,
+        stolenBases: null,
+        strikeOuts: null,
+        ops: null,
+        obp: null,
+        slg: null,
+        era: null,
+        whip: null,
+        strikeoutsPer9: null,
+        walksPer9: null,
+        wins: null,
+        saves: null,
+        holds: null,
+        inningsPitched: null,
+      };
+
+      if (!byNormName.has(normName)) {
+        byNormName.set(normName, {
+          STD: { ...defaultStats },
+          L7: { ...defaultStats },
+          L14: { ...defaultStats },
+          L30: { ...defaultStats },
+        });
+      }
+
+      const stats = byNormName.get(normName)!;
+
+      // Parse string values to numbers where applicable
+      const parseNum = (val: unknown): number | null => {
+        if (val === null || val === undefined) return null;
+        const n = Number(val);
+        return isNaN(n) ? null : n;
+      };
+
+      stats[window] = {
+        atBats: parseNum(row.atBats),
+        avg: parseNum(row.avg),
+        homeRuns: parseNum(row.homeRuns),
+        rbi: parseNum(row.rbi),
+        runs: parseNum(row.runs),
+        stolenBases: parseNum(row.stolenBases),
+        strikeOuts: parseNum(row.strikeOuts),
+        ops: parseNum(row.ops),
+        obp: parseNum(row.obp),
+        slg: parseNum(row.slg),
+        era: parseNum(row.era),
+        whip: parseNum(row.whip),
+        strikeoutsPer9: parseNum(row.strikeoutsPer9Inn),
+        walksPer9: parseNum(row.walksPer9Inn),
+        wins: parseNum(row.wins),
+        saves: parseNum(row.saves),
+        holds: parseNum(row.holds),
+        inningsPitched: parseNum(row.inningsPitched),
+      };
+    }
+
+    return byNormName;
+  } catch (error) {
+    // If prospects table doesn't exist or has no data, return empty map
+    console.warn('Could not load minor league stats:', error);
+    return new Map();
+  }
+}
+
 export async function queryProspects(
   sourceRows: ProspectSourceRow[],
   selectedLeague: string | null,
@@ -1086,6 +1267,12 @@ export async function queryProspects(
       });
     }
 
+    // Load minor league stats for all source row prospects
+    const prospectNormNames = Array.from(
+      new Set(sourceRows.map((r) => normalizePlayerName(r.player_name)).filter(Boolean))
+    );
+    const minorLeagueStatsByNormName = await loadMinorLeagueStats(conn, prospectNormNames);
+
     return buildProspectRows(sourceRows, ownerByNormName, {
       selectedFantasyTeams,
       selectedPositions,
@@ -1093,6 +1280,7 @@ export async function queryProspects(
       missingRankDefault,
       maxAge,
       rosterFilter,
+      minorLeagueStatsByNormName,
     });
   } finally {
     await conn.close();
