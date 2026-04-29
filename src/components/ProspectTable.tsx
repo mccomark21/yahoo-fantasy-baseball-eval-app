@@ -37,11 +37,38 @@ interface ProspectTableProps {
 const TREND_WINDOWS: ProspectStatsWindow[] = ['L30', 'L14', 'L7'];
 
 type TrendDirection = 'hot' | 'cold' | 'neutral';
+type ProspectRole = 'hitter' | 'pitcher' | 'two_way' | 'unknown';
 
 interface ProspectTrendSummary {
   emoji: string;
   score: number;
   tooltip: string;
+}
+
+const PITCHER_POSITION_CODES = new Set(['P', 'SP', 'RP']);
+const HITTER_POSITION_CODES = new Set(['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'DH', 'UT']);
+
+function parsePositionCodes(positions: string): string[] {
+  return positions
+    .split(/[,/]/)
+    .map((position) => position.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function getProspectRole(row: ProspectRow): ProspectRole {
+  const codes = parsePositionCodes(row.positions);
+
+  if (codes.length === 0) return 'unknown';
+
+  const hasPitchingCode = codes.some(
+    (code) => PITCHER_POSITION_CODES.has(code) || code === 'RHP' || code === 'LHP' || code.endsWith('P')
+  );
+  const hasHittingCode = codes.some((code) => HITTER_POSITION_CODES.has(code));
+
+  if (hasPitchingCode && hasHittingCode) return 'two_way';
+  if (hasPitchingCode) return 'pitcher';
+  if (hasHittingCode) return 'hitter';
+  return 'unknown';
 }
 
 function ratioDelta(current: number | null, baseline: number | null): number | null {
@@ -105,6 +132,17 @@ function getPitcherWindowScore(row: ProspectRow, window: ProspectStatsWindow): n
   }
 
   if (samples === 0) return null;
+
+  // Absolute guardrails to avoid marking clearly poor run prevention windows as hot.
+  if (recent.era != null) {
+    if (recent.era >= 6) score -= 0.8;
+    else if (recent.era <= 3.5) score += 0.25;
+  }
+  if (recent.whip != null) {
+    if (recent.whip >= 1.6) score -= 0.6;
+    else if (recent.whip <= 1.2) score += 0.2;
+  }
+
   return score;
 }
 
@@ -115,16 +153,38 @@ function getWindowDirection(score: number | null): TrendDirection {
   return 'neutral';
 }
 
+function applyHitterGuardrails(score: number | null, row: ProspectRow, window: ProspectStatsWindow): number | null {
+  if (score == null) return null;
+  const recent = row.minor_league_stats[window];
+  let adjusted = score;
+
+  if (recent.ops != null) {
+    if (recent.ops < 0.62) adjusted -= 0.55;
+    else if (recent.ops > 0.85) adjusted += 0.2;
+  }
+  if (recent.avg != null) {
+    if (recent.avg < 0.2) adjusted -= 0.35;
+    else if (recent.avg > 0.29) adjusted += 0.15;
+  }
+
+  return adjusted;
+}
+
 function getProspectTrendSummary(row: ProspectRow): ProspectTrendSummary {
   let hotCount = 0;
   let coldCount = 0;
   let totalScore = 0;
   let scoreSamples = 0;
   const details: string[] = [];
+  const role = getProspectRole(row);
 
   for (const window of TREND_WINDOWS) {
-    const hitterScore = getHitterWindowScore(row, window);
-    const pitcherScore = getPitcherWindowScore(row, window);
+    const hitterScore = role === 'hitter' || role === 'two_way' || role === 'unknown'
+      ? applyHitterGuardrails(getHitterWindowScore(row, window), row, window)
+      : null;
+    const pitcherScore = role === 'pitcher' || role === 'two_way' || role === 'unknown'
+      ? getPitcherWindowScore(row, window)
+      : null;
     const hasHitter = hitterScore != null;
     const hasPitcher = pitcherScore != null;
 
@@ -153,12 +213,14 @@ function getProspectTrendSummary(row: ProspectRow): ProspectTrendSummary {
   const emoji =
     hotCount === 0 && coldCount === 0
       ? ''
-      : hotCount >= coldCount
+      : hotCount > coldCount
         ? '🔥'.repeat(hotCount)
-        : '🧊'.repeat(coldCount);
+        : coldCount > hotCount
+          ? '🧊'.repeat(coldCount)
+          : '';
 
   const avgScore = scoreSamples > 0 ? totalScore / scoreSamples : 0;
-  const tooltip = `Trend signal from L30, L14, L7 vs STD\n${details.join('\n')}`;
+  const tooltip = `Trend signal (${role.replace('_', '-')}) from L30, L14, L7 vs STD\n${details.join('\n')}`;
 
   return {
     emoji,
