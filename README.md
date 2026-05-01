@@ -14,11 +14,13 @@ A browser-based tool for evaluating **hitters, starting pitchers, relievers, and
 - Time windows: Season-to-Date, Last 30 Days, Last 14 Days, Last 7 Days
 - Volume threshold filter: minimum PA and BBE set to 50% of the filtered-group medians
 - Z-score normalization for xwOBA, BB:K, Pull Air%, and SB
+- PA acts as a **confidence multiplier** on the STD composite: players below cohort-mean PA have their composite scaled down proportionally (capped at 1.0 — no bonus for above-average PA)
 - Composite score sorting (default):
 	- xwOBA: 40%
 	- BB:K: 30%
 	- Pull Air%: 20%
 	- SB: 10%
+	- PA Confidence Multiplier: `min(1.0, player_PA / cohort_mean_PA)` applied after blending
 - Z-scores are clamped to +/-2.5 to reduce outlier impact
 
 ### Pitchers
@@ -96,7 +98,7 @@ The app uses different ranking data behavior in local development versus product
 
 - **Three-mode workflow** — evaluate Hitters, Pitchers, and Relievers in one app
 - **Multi-league support** — switch between Yahoo leagues to evaluate different player pools
-- **Default roster focus** — defaults to Free Agent and Waiver teams when available
+- **Default roster focus** — defaults to Free Agent teams when available (across Hitters, Pitchers, Relievers, and Prospects)
 - **Sortable data tables** — sort by any visible column
 - **Theme toggle** — light/dark theme persisted via local storage
 - **Responsive UI** — optimized for desktop and mobile usage
@@ -112,15 +114,17 @@ The app uses different ranking data behavior in local development versus product
 | **Pull Air%** | Percentage of batted balls pulled or hit in the air |
 | **BB:K** | Walk-to-Strikeout ratio |
 | **SB** | Stolen Bases |
+| **PA Adj Z** | PA z-score shown for context; PA acts as a confidence multiplier on the STD composite (penalty for below-average PA, no bonus for above-average PA) |
 
-Each metric has a z-score column that normalizes values within the current filtered group. Composite score is a weighted blend of available z-scores.
+Each metric has a z-score column that normalizes values within the current filtered group. The STD composite is a weighted quality blend multiplied by a PA confidence factor.
 
-| Metric | Weight |
-|--------|--------|
-| xwOBA | 40% |
-| BB:K | 30% |
-| Pull Air% | 20% |
-| SB | 10% |
+| Metric | Weight / Role |
+|--------|---------------|
+| xwOBA | 40% (quality blend) |
+| BB:K | 30% (quality blend) |
+| Pull Air% | 20% (quality blend) |
+| SB | 10% (quality blend) |
+| PA | `min(1.0, player_PA / cohort_mean_PA)` — multiplier, not additive |
 
 Z-scores are clamped to ±2.5 to prevent outliers from dominating the composite. The table sorts by composite score (descending) by default.
 

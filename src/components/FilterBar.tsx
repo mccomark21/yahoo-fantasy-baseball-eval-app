@@ -172,7 +172,7 @@ export function FilterBar({
                 />
                 {hasDefaultRosterFocus && (
                   <p className="text-[11px] text-muted-foreground">
-                    Default roster focus active (Free Agent/Waiver)
+                    Default roster focus active (Free Agent)
                   </p>
                 )}
               </div>
@@ -262,7 +262,7 @@ export function FilterBar({
                 />
                 {hasDefaultRosterFocus && (
                   <p className="text-[11px] text-muted-foreground">
-                    Default roster focus active (Free Agent/Waiver)
+                    Default roster focus active (Free Agent)
                   </p>
                 )}
               </div>
@@ -280,7 +280,7 @@ export function FilterBar({
                 />
                 {hasDefaultRosterFocus && (
                   <p className="text-[11px] text-muted-foreground">
-                    Default roster focus active (Free Agent/Waiver)
+                    Default roster focus active (Free Agent)
                   </p>
                 )}
               </div>

@@ -1,6 +1,3 @@
 export function getDefaultRosterTeams(teams: string[]): string[] {
-  return teams.filter((team) => {
-    const normalized = team.toLowerCase();
-    return normalized.includes('free agent') || normalized.includes('waiver');
-  });
+  return teams.filter((team) => /\bfree\s*agent\b/i.test(team));
 }

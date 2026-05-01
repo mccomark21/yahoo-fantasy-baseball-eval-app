@@ -130,7 +130,7 @@ export default function App() {
       setSelectedTeams(nextTeamSelection);
       setSelectedPitcherTeams(nextTeamSelection);
       setSelectedReliefTeams(nextTeamSelection);
-      setSelectedProspectTeams([]);
+      setSelectedProspectTeams(nextTeamSelection);
 
       if (defaults.length > 0) {
         console.log(
@@ -190,9 +190,10 @@ export default function App() {
       console.log(
         `[query] ${rows.length} players returned, ${unmatchedCount} with no game log match`
       );
-      const filtered = filterByVolume(rows);
+      const deduped = rows.filter((r) => !/\(batter\)/i.test(r.player_name) && (r.pa != null || r.bbe != null));
+      const filtered = filterByVolume(deduped);
       console.log(
-        `[filter] ${filtered.length} players after volume filter (${rows.length - filtered.length} removed)`
+        `[filter] ${filtered.length} players after volume filter (${deduped.length - filtered.length} removed)`
       );
       setPlayers(computeZScores(filtered));
     } catch (err) {

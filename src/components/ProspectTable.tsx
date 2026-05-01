@@ -369,6 +369,9 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="cursor-pointer select-none" onClick={() => setSort('trend_score')}>
+                <div className="flex items-center gap-1">Trend {sortIcon('trend_score')}</div>
+              </TableHead>
               <TableHead className="cursor-pointer select-none" onClick={() => setSort('player_name')}>
                 <div className="flex items-center gap-1">Prospect {sortIcon('player_name')}</div>
               </TableHead>
@@ -382,9 +385,6 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
               </TableHead>
               <TableHead className="cursor-pointer select-none" onClick={() => setSort('average_rank')}>
                 <div className="flex items-center gap-1">Avg Rank {sortIcon('average_rank')}</div>
-              </TableHead>
-              <TableHead className="cursor-pointer select-none" onClick={() => setSort('trend_score')}>
-                <div className="flex items-center gap-1">Trend {sortIcon('trend_score')}</div>
               </TableHead>
               {showRankingColumns && (
                 <>
@@ -416,6 +416,7 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
 
                 return (
                   <TableRow key={row.norm_name}>
+                    <TableCell className="font-mono tabular-nums" title={trend.tooltip}>{trend.emoji || '—'}</TableCell>
                     <TableCell className="font-medium">
                       {row.player_name}
                     </TableCell>
@@ -426,7 +427,6 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                     <TableCell className="font-mono tabular-nums">{row.level ?? '—'}</TableCell>
                     <TableCell>{row.fantasy_team ?? 'Not Found'}</TableCell>
                     <TableCell className="font-mono tabular-nums font-semibold">{row.average_rank.toFixed(2)}</TableCell>
-                    <TableCell className="font-mono tabular-nums" title={trend.tooltip}>{trend.emoji || '—'}</TableCell>
                     {showRankingColumns && (
                       <>
                         <TableCell className="font-mono tabular-nums">{row.highest_rank}</TableCell>

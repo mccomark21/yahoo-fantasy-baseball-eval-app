@@ -26,7 +26,7 @@ import type { PlayerRow } from '@/lib/queries';
 import { useIsMobile } from '@/lib/use-mobile';
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 
-const Z_SCORE_COLUMNS = new Set(['z_xwoba', 'z_pull_air_pct', 'z_bb_k', 'z_sb']);
+const Z_SCORE_COLUMNS = new Set(['z_xwoba', 'z_pull_air_pct', 'z_bb_k', 'z_sb', 'z_pa']);
 const NUMERIC_COLUMNS = new Set([
   'pa',
   'bbe',
@@ -38,9 +38,9 @@ const NUMERIC_COLUMNS = new Set([
   'z_pull_air_pct',
   'z_bb_k',
   'z_sb',
+  'z_pa',
   'composite_score',
 ]);
-const RAW_METRIC_COLUMNS = new Set(['xwoba', 'pull_air_pct', 'bb_k', 'sb']);
 
 function hasNoStatcastData(row: PlayerRow): boolean {
   return row.pa == null && row.bbe == null;
@@ -77,6 +77,21 @@ function trendClass(values: number[]): string {
   const delta = values[values.length - 1] - values[0];
   if (Math.abs(delta) < 1e-6) return 'text-muted-foreground';
   return delta > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400';
+}
+
+function getHitterTrendEmoji(player: PlayerRow): string {
+  const toEmoji = (v: number | null) => {
+    if (v == null) return '➖';
+    if (v > 0.5) return '🔥';
+    if (v < -0.5) return '🧊';
+    return '➖';
+  };
+  return `${toEmoji(player.composite_l30)}${toEmoji(player.composite_l14)}${toEmoji(player.composite_l7)}`;
+}
+
+function getHitterTrendTooltip(player: PlayerRow): string {
+  const fmt = (v: number | null) => (v != null ? v.toFixed(2) : 'n/a');
+  return `L30: ${fmt(player.composite_l30)}  L14: ${fmt(player.composite_l14)}  L7: ${fmt(player.composite_l7)}`;
 }
 
 function MetricValueWithSparkline({
@@ -128,6 +143,15 @@ function MetricValueWithSparkline({
 function getColumns(showMetricSparklines: boolean): ColumnDef<PlayerRow>[] {
   return [
   {
+    id: 'trend',
+    header: 'Trend',
+    cell: ({ row }) => (
+      <span className="text-base tracking-wide" title={getHitterTrendTooltip(row.original)}>
+        {getHitterTrendEmoji(row.original)}
+      </span>
+    ),
+  },
+  {
     accessorKey: 'player_name',
     header: 'Player',
     cell: ({ row, getValue }) => (
@@ -135,10 +159,10 @@ function getColumns(showMetricSparklines: boolean): ColumnDef<PlayerRow>[] {
         <span className="font-medium">{getValue<string>()}</span>
         {hasNoStatcastData(row.original) && (
           <span
-            className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
             title="No Statcast game-log match found — possible name mismatch between Yahoo and pybaseball data"
+            aria-label="No Statcast data"
           >
-            No Statcast
+            ⚠️
           </span>
         )}
       </div>
@@ -155,6 +179,11 @@ function getColumns(showMetricSparklines: boolean): ColumnDef<PlayerRow>[] {
   {
     accessorKey: 'fantasy_team',
     header: 'Fantasy Team',
+    cell: ({ getValue }) => {
+      const v = getValue<string>();
+      const clean = v ? v.replace(/\s*\(.*?\)\s*/g, '').trim() : '—';
+      return <span className="text-xs text-muted-foreground truncate block max-w-[120px]" title={v}>{clean}</span>;
+    },
   },
   {
     accessorKey: 'pa',
@@ -265,6 +294,14 @@ function getColumns(showMetricSparklines: boolean): ColumnDef<PlayerRow>[] {
     },
   },
   {
+    accessorKey: 'z_pa',
+    header: 'PA Adj Z',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return v != null ? v.toFixed(2) : '—';
+    },
+  },
+  {
     accessorKey: 'composite_score',
     header: 'Composite',
     cell: ({ getValue }) => {
@@ -287,6 +324,7 @@ const SORT_OPTIONS = [
   { value: 'z_pull_air_pct', label: 'Pull% Z' },
   { value: 'z_bb_k', label: 'BB:K Z' },
   { value: 'z_sb', label: 'SB Z' },
+  { value: 'z_pa', label: 'PA Adj Z' },
   { value: 'xwoba', label: 'xwOBA' },
   { value: 'pull_air_pct', label: 'Pull Air%' },
   { value: 'bb_k', label: 'BB:K' },
@@ -331,16 +369,25 @@ function PlayerCard({
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="font-medium truncate">{player.player_name}</div>
+            <div className="flex items-center gap-1.5">
+              <span className="font-medium truncate">{player.player_name}</span>
+              {hasNoStatcastData(player) && (
+                <span
+                  title="No Statcast game-log match found — possible name mismatch between Yahoo and pybaseball data"
+                  aria-label="No Statcast data"
+                  className="shrink-0"
+                >
+                  ⚠️
+                </span>
+              )}
+              <span className="text-base tracking-wide shrink-0" title={getHitterTrendTooltip(player)}>
+                {getHitterTrendEmoji(player)}
+              </span>
+            </div>
             <div className="text-xs text-muted-foreground mt-0.5">
-              {player.mlb_team} · {player.position} · {player.fantasy_team}
+              {player.mlb_team} · {player.position} · <span className="">{player.fantasy_team ? player.fantasy_team.replace(/\s*\(.*?\)\s*/g, '').trim() : ''}</span>
               {player.bbe != null && <span> · <span className="font-mono tabular-nums">{player.bbe} BBE</span></span>}
             </div>
-            {hasNoStatcastData(player) && (
-              <span className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 mt-1">
-                No Statcast match
-              </span>
-            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <div className="text-right">
@@ -361,6 +408,7 @@ function PlayerCard({
           <ZBadge label="Pull%" value={player.z_pull_air_pct} />
           <ZBadge label="BB:K" value={player.z_bb_k} />
           <ZBadge label="SB" value={player.z_sb} />
+          <ZBadge label="PA Adj" value={player.z_pa} />
         </div>
       </button>
       {expanded && (
@@ -532,15 +580,15 @@ export function PlayerTable({ data, isLoading, showMetricSparklines }: PlayerTab
 
   return (
     <div className="flex min-h-0 flex-col flex-1 overflow-hidden">
-      <div className="min-h-0 overflow-auto flex-1">
-        <Table>
+      <div className="min-h-0 overflow-y-auto overflow-x-hidden flex-1">
+        <Table className="w-full table-auto">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
                   <TableHead
                     key={header.id}
-                    className="cursor-pointer select-none whitespace-nowrap sticky top-0 bg-background z-10"
+                    className="cursor-pointer select-none sticky top-0 bg-background z-10"
                     onClick={header.column.getToggleSortingHandler()}
                   >
                     <div className="flex items-center gap-1">
@@ -568,7 +616,7 @@ export function PlayerTable({ data, isLoading, showMetricSparklines }: PlayerTab
                   {row.getVisibleCells().map((cell) => (
                     <TableCell
                       key={cell.id}
-                      className={`whitespace-nowrap ${NUMERIC_COLUMNS.has(cell.column.id) ? 'font-mono tabular-nums' : ''} ${Z_SCORE_COLUMNS.has(cell.column.id) ? getZScoreBgClass(cell.getValue<number | null>()) : ''} ${RAW_METRIC_COLUMNS.has(cell.column.id) ? 'min-w-[96px]' : ''}`}
+                      className={`${NUMERIC_COLUMNS.has(cell.column.id) ? 'font-mono tabular-nums' : ''} ${Z_SCORE_COLUMNS.has(cell.column.id) ? getZScoreBgClass(cell.getValue<number | null>()) : ''}`}
                     >
                       {flexRender(
                         cell.column.columnDef.cell,

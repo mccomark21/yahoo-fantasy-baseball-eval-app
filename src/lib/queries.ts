@@ -43,7 +43,11 @@ export interface PlayerRow {
   z_pull_air_pct: number | null;
   z_bb_k: number | null;
   z_sb: number | null;
+  z_pa: number | null;
   composite_score: number | null;
+  composite_l30: number | null;
+  composite_l14: number | null;
+  composite_l7: number | null;
   trend_xwoba: number[];
   trend_pull_air_pct: number[];
   trend_bb_k: number[];
@@ -279,13 +283,16 @@ export async function getFantasyTeamsForLeague(league: string): Promise<string[]
 }
 
 function getDateFilter(timeWindow: TimeWindow): string {
+  const rankedDateSubquery =
+    `SELECT game_date FROM (SELECT game_date, DENSE_RANK() OVER (ORDER BY game_date DESC) AS day_rank FROM (SELECT DISTINCT game_date FROM game_logs)) ranked_dates`;
+
   switch (timeWindow) {
     case '7D':
-      return `AND g.game_date >= CURRENT_DATE - INTERVAL 7 DAY`;
+      return `AND g.game_date IN (${rankedDateSubquery} WHERE day_rank <= 7)`;
     case '14D':
-      return `AND g.game_date >= CURRENT_DATE - INTERVAL 14 DAY`;
+      return `AND g.game_date IN (${rankedDateSubquery} WHERE day_rank <= 14)`;
     case '30D':
-      return `AND g.game_date >= CURRENT_DATE - INTERVAL 30 DAY`;
+      return `AND g.game_date IN (${rankedDateSubquery} WHERE day_rank <= 30)`;
     case 'STD':
     default:
       return '';
@@ -380,36 +387,190 @@ export async function queryPlayers(
       z_pull_air_pct: null,
       z_bb_k: null,
       z_sb: null,
+      z_pa: null,
       composite_score: null,
+      composite_l30: null,
+      composite_l14: null,
+      composite_l7: null,
       trend_xwoba: [],
       trend_pull_air_pct: [],
       trend_bb_k: [],
       trend_sb: [],
     }));
 
-    if (timeWindow !== 'STD' || rows.length === 0) {
+    if (rows.length === 0) {
       return rows;
     }
 
-    const trendByNormName = await getSeasonToDateMetricTrends(
-      conn,
-      rows.map((r) => r.norm_name)
-    );
+    const [windowComposites, trendByNormName] = await Promise.all([
+      getWindowCompositeScores(conn, whereSQL),
+      timeWindow === 'STD'
+        ? getSeasonToDateMetricTrends(conn, rows.map((r) => r.norm_name))
+        : Promise.resolve(new Map<string, { xwoba: number[]; pull_air_pct: number[]; bb_k: number[]; sb: number[] }>()),
+    ]);
 
     return rows.map((row) => {
       const trend = trendByNormName.get(row.norm_name);
-      if (!trend) return row;
+      const wc = windowComposites.get(row.norm_name);
       return {
         ...row,
-        trend_xwoba: trend.xwoba,
-        trend_pull_air_pct: trend.pull_air_pct,
-        trend_bb_k: trend.bb_k,
-        trend_sb: trend.sb,
+        composite_l30: wc?.composite_l30 ?? null,
+        composite_l14: wc?.composite_l14 ?? null,
+        composite_l7: wc?.composite_l7 ?? null,
+        trend_xwoba: trend?.xwoba ?? [],
+        trend_pull_air_pct: trend?.pull_air_pct ?? [],
+        trend_bb_k: trend?.bb_k ?? [],
+        trend_sb: trend?.sb ?? [],
       };
     });
   } finally {
     await conn.close();
   }
+}
+
+type WindowRawMetrics = {
+  xwoba: number | null;
+  pull_air_pct: number | null;
+  bb_k: number | null;
+  sb: number | null;
+  pa: number | null;
+};
+
+function computeWindowComposites(
+  byNormName: Map<string, WindowRawMetrics>
+): Map<string, number | null> {
+  const metrics = ['xwoba', 'pull_air_pct', 'bb_k', 'sb', 'pa'] as const;
+  type MetricKey = (typeof metrics)[number];
+  const allRows = Array.from(byNormName.entries());
+
+  const stats = {} as Record<MetricKey, { mean: number; std: number }>;
+  for (const key of metrics) {
+    const vals = allRows.map(([, r]) => r[key]).filter((v): v is number => v != null);
+    if (vals.length < 2) {
+      stats[key] = { mean: 0, std: 0 };
+      continue;
+    }
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length;
+    stats[key] = { mean, std: Math.sqrt(variance) };
+  }
+
+  const result = new Map<string, number | null>();
+  for (const [normName, row] of allRows) {
+    let weightedSum = 0;
+    let weightSum = 0;
+    let hasAny = false;
+    for (const key of metrics) {
+      const val = row[key];
+      const { mean, std } = stats[key];
+      if (val == null || std === 0) continue;
+      const direction = Z_SCORE_DIRECTIONS[key];
+      const z = Math.max(-Z_CLAMP, Math.min(Z_CLAMP, direction * ((val - mean) / std)));
+      weightedSum += Z_SCORE_WEIGHTS[key] * z;
+      weightSum += Z_SCORE_WEIGHTS[key];
+      hasAny = true;
+    }
+    result.set(normName, hasAny ? Math.round((weightedSum / weightSum) * 100) / 100 : null);
+  }
+  return result;
+}
+
+async function getWindowCompositeScores(
+  conn: Awaited<ReturnType<Awaited<ReturnType<typeof getDB>>['connect']>>,
+  whereSQL: string
+): Promise<Map<string, { composite_l30: number | null; composite_l14: number | null; composite_l7: number | null }>> {
+  const sql = `
+    WITH ranked_dates AS (
+      SELECT
+        game_date,
+        DENSE_RANK() OVER (ORDER BY game_date DESC) AS day_rank
+      FROM (
+        SELECT DISTINCT game_date
+        FROM game_logs
+      )
+    )
+    SELECT
+      y.norm_name,
+      -- L30
+      CASE WHEN SUM(g.xwoba_denom) FILTER (WHERE rd.day_rank <= 30) > 0
+        THEN SUM(g.xwoba_num) FILTER (WHERE rd.day_rank <= 30)::DOUBLE /
+             SUM(g.xwoba_denom) FILTER (WHERE rd.day_rank <= 30)
+        ELSE NULL END AS xwoba_l30,
+      CASE WHEN SUM(g.bbe) FILTER (WHERE rd.day_rank <= 30) > 0
+        THEN SUM(g.pull_air_events) FILTER (WHERE rd.day_rank <= 30)::DOUBLE /
+             SUM(g.bbe) FILTER (WHERE rd.day_rank <= 30) * 100
+        ELSE NULL END AS pull_air_pct_l30,
+      CASE WHEN SUM(g.k) FILTER (WHERE rd.day_rank <= 30) > 0
+        THEN SUM(g.bb) FILTER (WHERE rd.day_rank <= 30)::DOUBLE /
+             SUM(g.k) FILTER (WHERE rd.day_rank <= 30)
+        ELSE NULL END AS bb_k_l30,
+      SUM(g.sb) FILTER (WHERE rd.day_rank <= 30) AS sb_l30,
+      SUM(g.pa) FILTER (WHERE rd.day_rank <= 30) AS pa_l30,
+      -- L14
+      CASE WHEN SUM(g.xwoba_denom) FILTER (WHERE rd.day_rank <= 14) > 0
+        THEN SUM(g.xwoba_num) FILTER (WHERE rd.day_rank <= 14)::DOUBLE /
+             SUM(g.xwoba_denom) FILTER (WHERE rd.day_rank <= 14)
+        ELSE NULL END AS xwoba_l14,
+      CASE WHEN SUM(g.bbe) FILTER (WHERE rd.day_rank <= 14) > 0
+        THEN SUM(g.pull_air_events) FILTER (WHERE rd.day_rank <= 14)::DOUBLE /
+             SUM(g.bbe) FILTER (WHERE rd.day_rank <= 14) * 100
+        ELSE NULL END AS pull_air_pct_l14,
+      CASE WHEN SUM(g.k) FILTER (WHERE rd.day_rank <= 14) > 0
+        THEN SUM(g.bb) FILTER (WHERE rd.day_rank <= 14)::DOUBLE /
+             SUM(g.k) FILTER (WHERE rd.day_rank <= 14)
+        ELSE NULL END AS bb_k_l14,
+      SUM(g.sb) FILTER (WHERE rd.day_rank <= 14) AS sb_l14,
+      SUM(g.pa) FILTER (WHERE rd.day_rank <= 14) AS pa_l14,
+      -- L7
+      CASE WHEN SUM(g.xwoba_denom) FILTER (WHERE rd.day_rank <= 7) > 0
+        THEN SUM(g.xwoba_num) FILTER (WHERE rd.day_rank <= 7)::DOUBLE /
+             SUM(g.xwoba_denom) FILTER (WHERE rd.day_rank <= 7)
+        ELSE NULL END AS xwoba_l7,
+      CASE WHEN SUM(g.bbe) FILTER (WHERE rd.day_rank <= 7) > 0
+        THEN SUM(g.pull_air_events) FILTER (WHERE rd.day_rank <= 7)::DOUBLE /
+             SUM(g.bbe) FILTER (WHERE rd.day_rank <= 7) * 100
+        ELSE NULL END AS pull_air_pct_l7,
+      CASE WHEN SUM(g.k) FILTER (WHERE rd.day_rank <= 7) > 0
+        THEN SUM(g.bb) FILTER (WHERE rd.day_rank <= 7)::DOUBLE /
+             SUM(g.k) FILTER (WHERE rd.day_rank <= 7)
+        ELSE NULL END AS bb_k_l7,
+      SUM(g.sb) FILTER (WHERE rd.day_rank <= 7) AS sb_l7,
+      SUM(g.pa) FILTER (WHERE rd.day_rank <= 7) AS pa_l7
+    FROM yahoo y
+    LEFT JOIN game_logs g
+      ON y.norm_name = g.norm_name
+    LEFT JOIN ranked_dates rd
+      ON g.game_date = rd.game_date
+    ${whereSQL}
+    GROUP BY y.norm_name
+  `;
+
+  const result = await conn.query(sql);
+
+  const l30Map = new Map<string, WindowRawMetrics>();
+  const l14Map = new Map<string, WindowRawMetrics>();
+  const l7Map = new Map<string, WindowRawMetrics>();
+
+  for (const row of result.toArray()) {
+    const normName = row.norm_name as string;
+    l30Map.set(normName, { xwoba: toNum(row.xwoba_l30), pull_air_pct: toNum(row.pull_air_pct_l30), bb_k: toNum(row.bb_k_l30), sb: toNum(row.sb_l30), pa: toNum(row.pa_l30) });
+    l14Map.set(normName, { xwoba: toNum(row.xwoba_l14), pull_air_pct: toNum(row.pull_air_pct_l14), bb_k: toNum(row.bb_k_l14), sb: toNum(row.sb_l14), pa: toNum(row.pa_l14) });
+    l7Map.set(normName, { xwoba: toNum(row.xwoba_l7), pull_air_pct: toNum(row.pull_air_pct_l7), bb_k: toNum(row.bb_k_l7), sb: toNum(row.sb_l7), pa: toNum(row.pa_l7) });
+  }
+
+  const composite30 = computeWindowComposites(l30Map);
+  const composite14 = computeWindowComposites(l14Map);
+  const composite7 = computeWindowComposites(l7Map);
+
+  const out = new Map<string, { composite_l30: number | null; composite_l14: number | null; composite_l7: number | null }>();
+  for (const normName of l30Map.keys()) {
+    out.set(normName, {
+      composite_l30: composite30.get(normName) ?? null,
+      composite_l14: composite14.get(normName) ?? null,
+      composite_l7: composite7.get(normName) ?? null,
+    });
+  }
+  return out;
 }
 
 async function getSeasonToDateMetricTrends(
@@ -581,17 +742,37 @@ export async function buildAccuracyCohort(
   }
 }
 
+// Weights for the additive quality blend (used for STD composite and window composites).
+// PA is NOT included here — it acts as a confidence multiplier on the STD composite instead.
+const Z_QUALITY_WEIGHTS = {
+  xwoba: 0.40,
+  pull_air_pct: 0.20,
+  bb_k: 0.30,
+  sb: 0.10,
+} as const;
+
+// Kept for window composites (L7/L14/L30) which still treat PA as an additive z-score,
+// since short windows naturally produce lower PA counts for everyone.
 const Z_SCORE_WEIGHTS = {
-  xwoba: 0.4,
+  xwoba: 0.34,
   pull_air_pct: 0.2,
-  bb_k: 0.3,
+  bb_k: 0.26,
   sb: 0.1,
+  pa: 0.1,
+} as const;
+
+const Z_SCORE_DIRECTIONS = {
+  xwoba: 1,
+  pull_air_pct: 1,
+  bb_k: 1,
+  sb: 1,
+  pa: 1,
 } as const;
 
 const Z_CLAMP = 2.5;
 
 export function computeZScores(rows: PlayerRow[]): PlayerRow[] {
-  const metrics = ['xwoba', 'pull_air_pct', 'bb_k', 'sb'] as const;
+  const metrics = ['xwoba', 'pull_air_pct', 'bb_k', 'sb', 'pa'] as const;
   type MetricKey = (typeof metrics)[number];
 
   const stats = {} as Record<MetricKey, { mean: number; std: number }>;
@@ -617,7 +798,8 @@ export function computeZScores(rows: PlayerRow[]): PlayerRow[] {
       if (val == null || std === 0) {
         zScores[`z_${key}`] = null;
       } else {
-        const z = (val - mean) / std;
+        const direction = Z_SCORE_DIRECTIONS[key];
+        const z = direction * ((val - mean) / std);
         zScores[`z_${key}`] = Math.max(-Z_CLAMP, Math.min(Z_CLAMP, z));
         availableCount++;
       }
@@ -625,16 +807,26 @@ export function computeZScores(rows: PlayerRow[]): PlayerRow[] {
 
     let composite: number | null = null;
     if (availableCount > 0) {
+      // Quality blend: xwOBA, BB:K, Pull Air%, SB — PA is applied as a multiplier below.
+      const qualityMetrics = ['xwoba', 'pull_air_pct', 'bb_k', 'sb'] as const;
       let weightedSum = 0;
       let weightSum = 0;
-      for (const key of metrics) {
+      for (const key of qualityMetrics) {
         const z = zScores[`z_${key}`];
         if (z != null) {
-          weightedSum += Z_SCORE_WEIGHTS[key] * z;
-          weightSum += Z_SCORE_WEIGHTS[key];
+          weightedSum += Z_QUALITY_WEIGHTS[key] * z;
+          weightSum += Z_QUALITY_WEIGHTS[key];
         }
       }
-      composite = Math.round((weightedSum / weightSum) * 100) / 100;
+      if (weightSum > 0) {
+        const qualityComposite = weightedSum / weightSum;
+        // PA confidence: penalizes players below cohort-mean PA, capped at 1.0 (no bonus for high PA).
+        const paConfidence =
+          row.pa != null && stats.pa.mean > 0
+            ? Math.min(1.0, row.pa / stats.pa.mean)
+            : 1.0;
+        composite = Math.round(qualityComposite * paConfidence * 100) / 100;
+      }
     }
 
     return { ...row, ...zScores, composite_score: composite };
@@ -726,7 +918,7 @@ function normalizeBatThrow(value: string | null): string | null {
 function normalizeHeight(value: string | null): string | null {
   const normalized = normalizeDisplayText(value);
   if (!normalized) return null;
-  const feetInches = normalized.match(/(\d+)\s*['’]\s*(\d{1,2})\s*(?:\"|”|in)?/);
+  const feetInches = normalized.match(/(\d+)\s*['’]\s*(\d{1,2})\s*(?:"|”|in)?/);
   if (feetInches) return `${feetInches[1]}'${feetInches[2]}"`;
   return normalized;
 }
