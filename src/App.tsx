@@ -3,6 +3,7 @@ import { loadData } from '@/lib/data-loader';
 import {
   getFilterOptions,
   getFantasyTeamsForLeague,
+  queryInjuredPitchers,
   queryPlayers,
   queryPitcherTrends,
   queryReliefTrends,
@@ -10,6 +11,7 @@ import {
   filterByVolume,
   computeZScores,
   type FilterOptions,
+  type InjuredPitcherTrendRow,
   type PlayerRow,
   type PitcherTrendRow,
   type ReliefTrendRow,
@@ -20,10 +22,14 @@ import { FilterBar } from '@/components/FilterBar';
 import { PlayerTable } from '@/components/PlayerTable';
 import { PitcherTable } from '@/components/PitcherTable';
 import { ReliefPitcherTable } from '@/components/ReliefPitcherTable';
+import { InjuredPitcherTable } from '@/components/InjuredPitcherTable';
 import { ProspectTable } from '@/components/ProspectTable';
 import {
+  fetchLatestInjuredPitchers,
   fetchLatestPitcherList,
+  fetchPitcherListHistory,
   fetchLatestReliefList,
+  fetchReliefListHistory,
   type ReliefScoringMode,
 } from '@/lib/pitcherlist-client';
 import { fetchLatestProspects, type ProspectSourceStatus } from '@/lib/prospects-client';
@@ -64,7 +70,7 @@ export default function App() {
   });
   const [status, setStatus] = useState<AppStatus>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'hitters' | 'pitchers' | 'relievers' | 'prospects'>('hitters');
+  const [viewMode, setViewMode] = useState<'hitters' | 'pitchers' | 'relievers' | 'injured' | 'prospects'>('hitters');
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
     leagues: [],
     fantasyTeams: [],
@@ -73,13 +79,16 @@ export default function App() {
   const [players, setPlayers] = useState<PlayerRow[]>([]);
   const [pitchers, setPitchers] = useState<PitcherTrendRow[]>([]);
   const [relievers, setRelievers] = useState<ReliefTrendRow[]>([]);
+  const [injuredPitchers, setInjuredPitchers] = useState<InjuredPitcherTrendRow[]>([]);
   const [prospects, setProspects] = useState<ProspectRow[]>([]);
   const [queryLoading, setQueryLoading] = useState(false);
   const [pitcherLoading, setPitcherLoading] = useState(false);
   const [reliefLoading, setReliefLoading] = useState(false);
+  const [injuredLoading, setInjuredLoading] = useState(false);
   const [prospectLoading, setProspectLoading] = useState(false);
   const [pitcherError, setPitcherError] = useState<string | null>(null);
   const [reliefError, setReliefError] = useState<string | null>(null);
+  const [injuredError, setInjuredError] = useState<string | null>(null);
   const [prospectError, setProspectError] = useState<string | null>(null);
   const [pitcherMeta, setPitcherMeta] = useState<{
     title: string;
@@ -91,6 +100,11 @@ export default function App() {
     source_url: string;
     published_at: string | null;
     scoring_mode: ReliefScoringMode;
+  } | null>(null);
+  const [injuredMeta, setInjuredMeta] = useState<{
+    title: string;
+    source_urls: { sp: string; rp: string };
+    scraped_at: string;
   } | null>(null);
   const [prospectsMeta, setProspectsMeta] = useState<{
     title: string;
@@ -105,6 +119,7 @@ export default function App() {
   const [timeWindow, setTimeWindow] = useState<TimeWindow>('STD');
   const [selectedPitcherTeams, setSelectedPitcherTeams] = useState<string[]>([]);
   const [selectedReliefTeams, setSelectedReliefTeams] = useState<string[]>([]);
+  const [selectedInjuredTeams, setSelectedInjuredTeams] = useState<string[]>([]);
   const [selectedProspectTeams, setSelectedProspectTeams] = useState<string[]>([]);
   const [selectedProspectMaxAge, setSelectedProspectMaxAge] = useState<number | null>(null);
   const [selectedProspectRosterFilter, setSelectedProspectRosterFilter] = useState<
@@ -130,6 +145,9 @@ export default function App() {
       setSelectedTeams(nextTeamSelection);
       setSelectedPitcherTeams(nextTeamSelection);
       setSelectedReliefTeams(nextTeamSelection);
+      // Injured tab intentionally shows all teams by default — injured pitchers are
+      // typically rostered, so applying the Free Agent default would hide all results.
+      setSelectedInjuredTeams([]);
       setSelectedProspectTeams(nextTeamSelection);
 
       if (defaults.length > 0) {
@@ -210,12 +228,16 @@ export default function App() {
     setPitcherError(null);
 
     try {
-      const latest = await fetchLatestPitcherList();
+      const [latest, history] = await Promise.all([
+        fetchLatestPitcherList(),
+        fetchPitcherListHistory(),
+      ]);
       const joined = await queryPitcherTrends(
         latest.rows,
         selectedLeague,
         selectedPitcherTeams,
-        playerSearch
+        playerSearch,
+        history.snapshots
       );
       setPitchers(joined);
       setPitcherMeta({
@@ -238,12 +260,16 @@ export default function App() {
     setReliefError(null);
 
     try {
-      const latest = await fetchLatestReliefList(reliefScoringMode);
+      const [latest, history] = await Promise.all([
+        fetchLatestReliefList(reliefScoringMode),
+        fetchReliefListHistory(reliefScoringMode),
+      ]);
       const joined = await queryReliefTrends(
         latest.rows,
         selectedLeague,
         selectedReliefTeams,
-        playerSearch
+        playerSearch,
+        history.snapshots
       );
       setRelievers(joined);
       setReliefMeta({
@@ -259,6 +285,34 @@ export default function App() {
       setReliefLoading(false);
     }
   }, [status, selectedLeague, selectedReliefTeams, reliefScoringMode, playerSearch]);
+
+  const runInjuredQuery = useCallback(async () => {
+    if (status !== 'ready') return;
+
+    setInjuredLoading(true);
+    setInjuredError(null);
+
+    try {
+      const latest = await fetchLatestInjuredPitchers();
+      const joined = await queryInjuredPitchers(
+        latest.rows,
+        selectedLeague,
+        selectedInjuredTeams,
+        playerSearch
+      );
+      setInjuredPitchers(joined);
+      setInjuredMeta({
+        title: latest.title,
+        source_urls: latest.source_urls,
+        scraped_at: latest.scraped_at,
+      });
+    } catch (err) {
+      setInjuredError(err instanceof Error ? err.message : String(err));
+      setInjuredPitchers([]);
+    } finally {
+      setInjuredLoading(false);
+    }
+  }, [status, selectedLeague, selectedInjuredTeams, playerSearch]);
 
   const runProspectQuery = useCallback(async () => {
     if (status !== 'ready') return;
@@ -356,6 +410,7 @@ export default function App() {
       setSelectedTeams([]);
       setSelectedPitcherTeams([]);
       setSelectedReliefTeams([]);
+      setSelectedInjuredTeams([]);
       setSelectedProspectTeams([]);
     }
   }, [applyDefaultTeamSelections]);
@@ -371,6 +426,10 @@ export default function App() {
         void runPitcherQuery();
         return;
       }
+      if (viewMode === 'injured') {
+        void runInjuredQuery();
+        return;
+      }
       if (viewMode === 'prospects') {
         void runProspectQuery();
         return;
@@ -378,7 +437,7 @@ export default function App() {
       void runReliefQuery();
     }, 100);
     return () => clearTimeout(timer);
-  }, [viewMode, runQuery, runPitcherQuery, runReliefQuery, runProspectQuery]);
+  }, [viewMode, runQuery, runPitcherQuery, runReliefQuery, runInjuredQuery, runProspectQuery]);
 
   if (status === 'loading') {
     return (
@@ -429,6 +488,7 @@ export default function App() {
                   | 'hitters'
                   | 'pitchers'
                   | 'relievers'
+                  | 'injured'
                   | 'prospects';
                 if (nextView !== viewMode) {
                   setSearchDraft('');
@@ -458,6 +518,12 @@ export default function App() {
               RP Rankings
             </ToggleGroupItem>
             <ToggleGroupItem
+              value="injured"
+              className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
+            >
+              Injured
+            </ToggleGroupItem>
+            <ToggleGroupItem
               value="prospects"
               className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
             >
@@ -482,6 +548,8 @@ export default function App() {
         onPitcherTeamsChange={setSelectedPitcherTeams}
         selectedReliefTeams={selectedReliefTeams}
         onReliefTeamsChange={setSelectedReliefTeams}
+        selectedInjuredTeams={selectedInjuredTeams}
+        onInjuredTeamsChange={setSelectedInjuredTeams}
         selectedProspectTeams={selectedProspectTeams}
         onProspectTeamsChange={setSelectedProspectTeams}
         selectedProspectMaxAge={selectedProspectMaxAge}
@@ -553,6 +621,40 @@ export default function App() {
             )}
           </div>
           <ReliefPitcherTable data={relievers} isLoading={reliefLoading} />
+        </>
+      ) : viewMode === 'injured' ? (
+        <>
+          <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
+            {injuredError ? (
+              <span className="text-destructive">Injured pitcher rankings fetch failed: {injuredError}</span>
+            ) : injuredMeta ? (
+              <span>
+                {injuredMeta.title}
+                {` · Refreshed ${new Date(injuredMeta.scraped_at).toLocaleString()}`}
+                {' · '}
+                <a
+                  href={injuredMeta.source_urls.sp}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  SP Source
+                </a>
+                {' · '}
+                <a
+                  href={injuredMeta.source_urls.rp}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  RP Source
+                </a>
+              </span>
+            ) : (
+              <span>Loading injured pitcher rankings...</span>
+            )}
+          </div>
+          <InjuredPitcherTable data={injuredPitchers} isLoading={injuredLoading} />
         </>
       ) : (
         <>

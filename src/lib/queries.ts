@@ -1,5 +1,13 @@
 import { getDB } from './duckdb';
-import type { PitcherListRankRow, ReliefListRankRow, TrendDirection } from './pitcherlist-client';
+import type {
+  InjuredPitcherRow,
+  PitcherListHistorySnapshot,
+  PitcherListRankRow,
+  PitcherSourceList,
+  ReliefListHistorySnapshot,
+  ReliefListRankRow,
+  TrendDirection,
+} from './pitcherlist-client';
 import type { ProspectSourceRow } from './prospects-client';
 
 export type TimeWindow = 'STD' | '7D' | '14D' | '30D';
@@ -64,6 +72,10 @@ export interface PitcherTrendRow {
   notes: string | null;
   fantasy_team: string | null;
   league_name: string | null;
+  trend_8w_series: (number | null)[];
+  trend_8w_net: number | null;
+  trend_start_rank: number | null;
+  trend_end_rank: number | null;
 }
 
 export interface ReliefTrendRow {
@@ -74,6 +86,20 @@ export interface ReliefTrendRow {
   movement_value: number | null;
   trend_direction: TrendDirection;
   notes: string | null;
+  fantasy_team: string | null;
+  league_name: string | null;
+  trend_8w_series: (number | null)[];
+  trend_8w_net: number | null;
+  trend_start_rank: number | null;
+  trend_end_rank: number | null;
+}
+
+export interface InjuredPitcherTrendRow {
+  rank_when_healthy: number | null;
+  player_name: string;
+  mlb_team: string | null;
+  injury_note: string | null;
+  source_list: PitcherSourceList;
   fantasy_team: string | null;
   league_name: string | null;
 }
@@ -1040,6 +1066,78 @@ export function normalizePlayerName(name: string): string {
     .trim();
 }
 
+interface RankSnapshotRow {
+  latest_rank: number;
+  player_name: string;
+}
+
+interface RankHistorySnapshot<TRow extends RankSnapshotRow> {
+  snapshot_date: string;
+  rows: TRow[];
+}
+
+function toTimestamp(dateValue: string): number {
+  const time = Date.parse(dateValue);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function buildRankTrendByNormName<TRow extends RankSnapshotRow>(
+  latestRows: TRow[],
+  historySnapshots: Array<RankHistorySnapshot<TRow>>,
+  maxPoints = 8
+): Map<string, (number | null)[]> {
+  const targetNorms = new Set(
+    latestRows.map((row) => normalizePlayerName(row.player_name)).filter(Boolean)
+  );
+  const snapshotsByDate = new Map<string, RankHistorySnapshot<TRow>>();
+
+  for (const snapshot of historySnapshots) {
+    if (!snapshot.snapshot_date || !Array.isArray(snapshot.rows)) continue;
+    const existing = snapshotsByDate.get(snapshot.snapshot_date);
+    if (!existing || snapshot.rows.length >= existing.rows.length) {
+      snapshotsByDate.set(snapshot.snapshot_date, snapshot);
+    }
+  }
+
+  // Ensure the current ranking set is always represented even if history fetch is stale.
+  snapshotsByDate.set(new Date().toISOString().slice(0, 10), {
+    snapshot_date: new Date().toISOString(),
+    rows: latestRows,
+  });
+
+  const snapshots = [...snapshotsByDate.values()].sort(
+    (a, b) => toTimestamp(a.snapshot_date) - toTimestamp(b.snapshot_date)
+  );
+
+  const seriesByNormName = new Map<string, (number | null)[]>();
+  for (const normName of targetNorms) {
+    seriesByNormName.set(normName, []);
+  }
+
+  for (const snapshot of snapshots) {
+    const rankByNormName = new Map<string, number>();
+    for (const row of snapshot.rows) {
+      const normName = normalizePlayerName(row.player_name);
+      if (!normName || !targetNorms.has(normName)) continue;
+      if (!rankByNormName.has(normName)) {
+        rankByNormName.set(normName, row.latest_rank);
+      }
+    }
+
+    for (const [normName, series] of seriesByNormName.entries()) {
+      const rank = rankByNormName.get(normName);
+      // Push null for weeks where the pitcher was absent (injured/unranked)
+      series.push(rank ?? null);
+    }
+  }
+
+  for (const [normName, series] of seriesByNormName.entries()) {
+    seriesByNormName.set(normName, series.slice(-maxPoints));
+  }
+
+  return seriesByNormName;
+}
+
 interface ProspectOwnership {
   fantasy_team: string | null;
   league_name: string | null;
@@ -1492,7 +1590,8 @@ export async function queryPitcherTrends(
   ranks: PitcherListRankRow[],
   selectedLeague: string | null,
   selectedFantasyTeams: string[],
-  playerNameSearch?: string
+  playerNameSearch?: string,
+  historySnapshots: PitcherListHistorySnapshot[] = []
 ): Promise<PitcherTrendRow[]> {
   const db = await getDB();
   const conn = await db.connect();
@@ -1519,10 +1618,19 @@ export async function queryPitcherTrends(
       });
     }
 
+    const trendByNormName = buildRankTrendByNormName(ranks, historySnapshots, 8);
+
     const joined = ranks.map((rank) => {
       const normName = normalizePlayerName(rank.player_name);
       const ownership = ownerByNormName.get(normName);
       const fantasyTeam = ownership?.fantasy_team ?? null;
+      const trendSeries = trendByNormName.get(normName) ?? [rank.latest_rank];
+      const trendStartRank = trendSeries.find((v) => v != null) ?? null;
+      const trendEndRank = [...trendSeries].reverse().find((v) => v != null) ?? null;
+      const trendNet =
+        trendStartRank != null && trendEndRank != null
+          ? trendStartRank - trendEndRank
+          : null;
 
       return {
         latest_rank: rank.latest_rank,
@@ -1534,6 +1642,10 @@ export async function queryPitcherTrends(
         notes: rank.notes,
         fantasy_team: fantasyTeam,
         league_name: ownership?.league_name ?? null,
+        trend_8w_series: trendSeries,
+        trend_8w_net: trendNet,
+        trend_start_rank: trendStartRank,
+        trend_end_rank: trendEndRank,
       } satisfies PitcherTrendRow;
     });
 
@@ -1557,7 +1669,8 @@ export async function queryReliefTrends(
   ranks: ReliefListRankRow[],
   selectedLeague: string | null,
   selectedFantasyTeams: string[],
-  playerNameSearch?: string
+  playerNameSearch?: string,
+  historySnapshots: ReliefListHistorySnapshot[] = []
 ): Promise<ReliefTrendRow[]> {
   const db = await getDB();
   const conn = await db.connect();
@@ -1584,10 +1697,19 @@ export async function queryReliefTrends(
       });
     }
 
+    const trendByNormName = buildRankTrendByNormName(ranks, historySnapshots, 8);
+
     const joined = ranks.map((rank) => {
       const normName = normalizePlayerName(rank.player_name);
       const ownership = ownerByNormName.get(normName);
       const fantasyTeam = ownership?.fantasy_team ?? null;
+      const trendSeries = trendByNormName.get(normName) ?? [rank.latest_rank];
+      const trendStartRank = trendSeries.find((v) => v != null) ?? null;
+      const trendEndRank = [...trendSeries].reverse().find((v) => v != null) ?? null;
+      const trendNet =
+        trendStartRank != null && trendEndRank != null
+          ? trendStartRank - trendEndRank
+          : null;
 
       return {
         latest_rank: rank.latest_rank,
@@ -1599,6 +1721,10 @@ export async function queryReliefTrends(
         notes: rank.notes,
         fantasy_team: fantasyTeam,
         league_name: ownership?.league_name ?? null,
+        trend_8w_series: trendSeries,
+        trend_8w_net: trendNet,
+        trend_start_rank: trendStartRank,
+        trend_end_rank: trendEndRank,
       } satisfies ReliefTrendRow;
     });
 
@@ -1613,6 +1739,78 @@ export async function queryReliefTrends(
       : teamFiltered;
 
     return filtered.sort((a, b) => a.latest_rank - b.latest_rank);
+  } finally {
+    await conn.close();
+  }
+}
+
+export async function queryInjuredPitchers(
+  rows: InjuredPitcherRow[],
+  selectedLeague: string | null,
+  selectedFantasyTeams: string[],
+  playerNameSearch?: string
+): Promise<InjuredPitcherTrendRow[]> {
+  const db = await getDB();
+  const conn = await db.connect();
+
+  try {
+    let sql = 'SELECT player_name, league_name, fantasy_team, norm_name FROM yahoo';
+    if (selectedLeague) {
+      sql += ` WHERE league_name = '${escapeSQL(selectedLeague)}'`;
+    }
+
+    const result = await conn.query(sql);
+    const ownershipRows = result.toArray();
+    const ownerByNormName = new Map<
+      string,
+      { fantasy_team: string | null; league_name: string | null }
+    >();
+
+    for (const row of ownershipRows) {
+      const normName = (row.norm_name as string | null) ?? null;
+      if (!normName || ownerByNormName.has(normName)) continue;
+      ownerByNormName.set(normName, {
+        fantasy_team: (row.fantasy_team as string | null) ?? null,
+        league_name: (row.league_name as string | null) ?? null,
+      });
+    }
+
+    const joined = rows.map((row) => {
+      const normName = normalizePlayerName(row.player_name);
+      const ownership = ownerByNormName.get(normName);
+
+      return {
+        rank_when_healthy: row.rank_when_healthy,
+        player_name: row.player_name,
+        mlb_team: row.mlb_team,
+        injury_note: row.injury_note,
+        source_list: row.source_list,
+        fantasy_team: ownership?.fantasy_team ?? null,
+        league_name: ownership?.league_name ?? null,
+      } satisfies InjuredPitcherTrendRow;
+    });
+
+    const teamFiltered =
+      selectedFantasyTeams.length > 0
+        ? joined.filter((r) => r.fantasy_team != null && selectedFantasyTeams.includes(r.fantasy_team))
+        : joined;
+
+    const normalizedSearch = playerNameSearch ? normalizePlayerName(playerNameSearch) : '';
+    const filtered = normalizedSearch
+      ? teamFiltered.filter((row) => normalizePlayerName(row.player_name).includes(normalizedSearch))
+      : teamFiltered;
+
+    return filtered.sort((a, b) => {
+      if (a.source_list !== b.source_list) {
+        return a.source_list.localeCompare(b.source_list);
+      }
+      const aRank = a.rank_when_healthy ?? Number.MAX_SAFE_INTEGER;
+      const bRank = b.rank_when_healthy ?? Number.MAX_SAFE_INTEGER;
+      if (aRank !== bRank) {
+        return aRank - bRank;
+      }
+      return a.player_name.localeCompare(b.player_name);
+    });
   } finally {
     await conn.close();
   }

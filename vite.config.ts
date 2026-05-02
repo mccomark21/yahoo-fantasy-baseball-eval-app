@@ -3,7 +3,7 @@ import type { Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { load } from 'cheerio'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, writeFile, readFile } from 'fs/promises'
 import path from 'path'
 
 const PITCHER_LIST_CATEGORY_URL =
@@ -16,10 +16,13 @@ const PROSPECTS_LIVE_URL = 'https://www.prospectslive.com/2026-top-100-prospects
 const PRODUCTION_API_BASE_URL =
   process.env.PRODUCTION_API_BASE_URL ??
   'https://mccomark21.github.io/yahoo-fantasy-baseball-eval-app/api'
+const MAX_HISTORY_SNAPSHOTS = 12
+const HISTORY_BACKFILL_TARGET = 8
 
 type ReliefScoringMode = 'svhld' | 'saves'
 type ProspectSourceName = 'mlb' | 'fangraphs' | 'prospects_live'
 type SnapshotRefreshTarget = 'all' | 'pitcher' | 'relief'
+type PitcherSourceList = 'SP' | 'RP'
 
 type TrendDirection = 'up' | 'down' | 'flat' | 'new' | 'unknown'
 
@@ -48,6 +51,40 @@ interface ReliefListLatestResponse {
   scraped_at: string
   scoring_mode: ReliefScoringMode
   rows: PitcherListRankRow[]
+}
+
+interface PitcherListHistorySnapshot extends PitcherListLatestResponse {
+  snapshot_date: string
+}
+
+interface PitcherListHistoryResponse {
+  snapshots: PitcherListHistorySnapshot[]
+}
+
+interface ReliefListHistorySnapshot extends ReliefListLatestResponse {
+  snapshot_date: string
+}
+
+interface ReliefListHistoryResponse {
+  snapshots: ReliefListHistorySnapshot[]
+}
+
+interface InjuredPitcherRow {
+  rank_when_healthy: number | null
+  player_name: string
+  mlb_team: string | null
+  injury_note: string | null
+  source_list: PitcherSourceList
+}
+
+interface InjuredPitchersLatestResponse {
+  title: string
+  source_urls: {
+    sp: string
+    rp: string
+  }
+  scraped_at: string
+  rows: InjuredPitcherRow[]
 }
 
 interface ProspectSourceRow {
@@ -148,7 +185,7 @@ function normalizeHeightValue(value: unknown): string | null {
   const normalized = normalizeWhitespace(String(value ?? ''))
   if (!normalized) return null
 
-  const feetInches = normalized.match(/(\d+)\s*['’]\s*(\d{1,2})\s*(?:\"|”|in)?/)
+  const feetInches = normalized.match(/(\d+)\s*['’]\s*(\d{1,2})\s*(?:"|”|in)?/)
   if (feetInches) {
     return `${feetInches[1]}'${feetInches[2]}"`
   }
@@ -188,7 +225,7 @@ function extractScoutingGradesSummary(report: string | null): string | null {
     return normalizeWhitespace(tightMatch[1])
   }
 
-  const looseMatch = report.match(/Scouting grades?:\s*([^\.]{1,220})/i)
+  const looseMatch = report.match(/Scouting grades?:\s*([^.]{1,220})/i)
   if (looseMatch) {
     return normalizeWhitespace(looseMatch[1])
   }
@@ -344,11 +381,12 @@ function matchesArticlePattern(pathname: string, articlePattern: RegExp): boolea
   return safePattern.test(pathname)
 }
 
-function extractLatestArticleUrl(
+function extractMultipleArticleUrls(
   categoryHtml: string,
   articlePattern: RegExp,
-  errorMessage: string
-): string {
+  errorMessage: string,
+  maxArticles = 1
+): string[] {
   const $ = load(categoryHtml)
   const links = $('a[href]')
     .map((_i, el) => $(el).attr('href') ?? '')
@@ -387,13 +425,19 @@ function extractLatestArticleUrl(
     return a.index - b.index
   })
 
-  const candidate = rankedCandidates[0]
-
-  if (!candidate) {
+  if (rankedCandidates.length === 0) {
     throw new Error(errorMessage)
   }
 
-  return candidate.url
+  return rankedCandidates.slice(0, maxArticles).map((c) => c.url)
+}
+
+function extractLatestArticleUrl(
+  categoryHtml: string,
+  articlePattern: RegExp,
+  errorMessage: string
+): string {
+  return extractMultipleArticleUrls(categoryHtml, articlePattern, errorMessage, 1)[0]
 }
 
 function parseRankingArticle(
@@ -557,6 +601,155 @@ function parseReliefListArticle(
   }
 }
 
+function parseInjuredPitchersFromArticle(
+  articleHtml: string,
+  sourceList: PitcherSourceList
+): InjuredPitcherRow[] {
+  const $ = load(articleHtml)
+  const headingPattern = /injured pitchers who will be considered when healthy/i
+
+  const tables = $('table').filter((_i, table) => {
+    // Strategy 1: direct previous sibling heading (h1–h4, p, strong)
+    const siblingHeadingText = normalizeWhitespace(
+      $(table).prevAll('h1, h2, h3, h4, p, strong').first().text()
+    )
+    if (headingPattern.test(siblingHeadingText)) return true
+
+    // Strategy 2: div.table-branding .title inside the outer div.table wrapper
+    // Article structure: div.table > [div.table-branding > div.title] + [div.dt-container > ... > table]
+    const wrapperTitle = normalizeWhitespace(
+      $(table).closest('div.table').find('.table-branding .title').first().text()
+    )
+    if (headingPattern.test(wrapperTitle)) return true
+
+    return false
+  })
+
+  const targetTable = tables.first()
+  if (!targetTable.length) {
+    // Log all table headings to help diagnose when the section heading pattern
+    // doesn't match the article's actual HTML structure.
+    const allHeadings: string[] = []
+    $('table').each((_i, table) => {
+      const siblingText = normalizeWhitespace(
+        $(table).prevAll('h1, h2, h3, h4, p, strong').first().text()
+      )
+      const wrapperText = normalizeWhitespace(
+        $(table).closest('div.table').find('.table-branding .title').first().text()
+      )
+      const heading = siblingText || wrapperText
+      if (heading) allHeadings.push(heading)
+    })
+    console.warn(
+      `[injured] No table found for "${headingPattern}" in ${sourceList} article. ` +
+        `Nearby headings: ${allHeadings.slice(0, 6).join(' | ') || '(none)'}`
+    )
+    return []
+  }
+
+  const rows: InjuredPitcherRow[] = []
+  const allRows = targetTable.find('tr')
+
+  const headerCells = allRows
+    .first()
+    .find('th, td')
+    .map((_i, cell) => normalizeWhitespace($(cell).text()).toLowerCase())
+    .get()
+
+  const findHeaderIndex = (matcher: RegExp): number =>
+    headerCells.findIndex((header) => matcher.test(header))
+
+  const rankIndex = findHeaderIndex(/rank/)
+  const playerIndex = findHeaderIndex(/player|pitcher|name/)
+  const teamIndex = findHeaderIndex(/team/)
+  const noteIndex = findHeaderIndex(/injur|note|status/)
+
+  allRows.slice(1).each((_i, tr) => {
+    const cells = $(tr)
+      .find('td')
+      .map((_j, td) => normalizeWhitespace($(td).text()))
+      .get()
+
+    if (cells.length === 0) {
+      return
+    }
+
+    const playerCell = cells[playerIndex >= 0 ? playerIndex : 1] ?? cells[0] ?? ''
+    const playerName = cleanPlayerName(playerCell)
+    if (!playerName) {
+      return
+    }
+
+    const rankCell = cells[rankIndex >= 0 ? rankIndex : 0] ?? ''
+    const rankMatch = rankCell.match(/\d+/)
+    const rankValue = rankMatch ? Number.parseInt(rankMatch[0], 10) : Number.NaN
+
+    const teamCell = teamIndex >= 0 ? (cells[teamIndex] ?? '') : ''
+    const noteCell = cells[noteIndex >= 0 ? noteIndex : cells.length - 1] ?? ''
+
+    rows.push({
+      rank_when_healthy: Number.isFinite(rankValue) ? rankValue : null,
+      player_name: playerName,
+      mlb_team: teamCell || null,
+      injury_note: noteCell || null,
+      source_list: sourceList,
+    })
+  })
+
+  return rows
+}
+
+async function fetchLatestInjuredPitchers(): Promise<InjuredPitchersLatestResponse> {
+  const pitcherCategoryHtml = await fetchHtml(PITCHER_LIST_CATEGORY_URL)
+  const pitcherArticleUrl = extractLatestArticleUrl(
+    pitcherCategoryHtml,
+    /\/top-100-starting-pitchers-for-[^/]+\/?$/i,
+    'Unable to find latest starting pitcher rankings article URL'
+  )
+  const pitcherArticleHtml = await fetchHtml(pitcherArticleUrl)
+
+  const reliefCategoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL_SVHLD)
+  const reliefArticleUrl = extractLatestArticleUrl(
+    reliefCategoryHtml,
+    /\/fantasy-reliever-rankings-closers-holds-solds-[^/]+\/?$/i,
+    'Unable to find latest reliever rankings article URL'
+  )
+  const reliefArticleHtml = await fetchHtml(reliefArticleUrl)
+
+  const combinedRows = [
+    ...parseInjuredPitchersFromArticle(pitcherArticleHtml, 'SP'),
+    ...parseInjuredPitchersFromArticle(reliefArticleHtml, 'RP'),
+  ]
+
+  const deduped = new Map<string, InjuredPitcherRow>()
+  for (const row of combinedRows) {
+    const key = `${cleanPlayerName(row.player_name).toLowerCase()}::${row.source_list}`
+    if (!deduped.has(key)) {
+      deduped.set(key, row)
+    }
+  }
+
+  return {
+    title: 'Pitcher List Injured Pitchers Who Will Be Considered When Healthy',
+    source_urls: {
+      sp: pitcherArticleUrl,
+      rp: reliefArticleUrl,
+    },
+    scraped_at: new Date().toISOString(),
+    rows: [...deduped.values()].sort((a, b) => {
+      if (a.source_list !== b.source_list) {
+        return a.source_list.localeCompare(b.source_list)
+      }
+      const aRank = a.rank_when_healthy ?? Number.MAX_SAFE_INTEGER
+      const bRank = b.rank_when_healthy ?? Number.MAX_SAFE_INTEGER
+      if (aRank !== bRank) {
+        return aRank - bRank
+      }
+      return a.player_name.localeCompare(b.player_name)
+    }),
+  }
+}
+
 async function fetchHtml(url: string): Promise<string> {
   const response = await fetch(url, {
     headers: {
@@ -617,6 +810,60 @@ function buildProductionSnapshotUrl(relativePath: string): string {
   return new URL(relativePath, `${PRODUCTION_API_BASE_URL.replace(/\/?$/, '/')}`).toString()
 }
 
+function normalizeSnapshotDate(value: string | null | undefined): string | null {
+  if (!value) {
+    return null
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return null
+  }
+
+  return parsed.toISOString().slice(0, 10)
+}
+
+function resolveSnapshotDate(publishedAt: string | null, scrapedAt: string): string {
+  return (
+    normalizeSnapshotDate(publishedAt) ??
+    normalizeSnapshotDate(scrapedAt) ??
+    new Date().toISOString().slice(0, 10)
+  )
+}
+
+function upsertHistorySnapshots<T extends { snapshot_date: string }>(
+  existing: T[] | undefined,
+  current: T,
+  maxSnapshots = MAX_HISTORY_SNAPSHOTS
+): T[] {
+  const byDate = new Map<string, T>()
+  byDate.set(current.snapshot_date, current)
+
+  for (const snapshot of existing ?? []) {
+    if (!byDate.has(snapshot.snapshot_date)) {
+      byDate.set(snapshot.snapshot_date, snapshot)
+    }
+  }
+
+  return [...byDate.values()]
+    .sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date))
+    .slice(0, maxSnapshots)
+}
+
+function toPitcherHistorySnapshot(payload: PitcherListLatestResponse): PitcherListHistorySnapshot {
+  return {
+    ...payload,
+    snapshot_date: resolveSnapshotDate(payload.published_at, payload.scraped_at),
+  }
+}
+
+function toReliefHistorySnapshot(payload: ReliefListLatestResponse): ReliefListHistorySnapshot {
+  return {
+    ...payload,
+    snapshot_date: resolveSnapshotDate(payload.published_at, payload.scraped_at),
+  }
+}
+
 async function fetchJsonSnapshot<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: {
@@ -642,7 +889,7 @@ function normalizePositionToken(token: string): string {
 
 function splitPositions(raw: string): string[] {
   return raw
-    .split(/[\/,]/)
+    .split(/[/,]/)
     .map((part) => normalizePositionToken(part))
     .filter(Boolean)
 }
@@ -877,7 +1124,7 @@ function parseProspectsLivePage(html: string): ProspectSourceRow[] {
 
   $('h3').each((_i, h3) => {
     const headingText = normalizeWhitespace($(h3).text())
-    const match = headingText.match(/^(\d+)\.\s*(.+?),\s*([^\-]+?)\s*-\s*(\d+)\s*OFP$/i)
+    const match = headingText.match(/^(\d+)\.\s*(.+?),\s*([^-]+?)\s*-\s*(\d+)\s*OFP$/i)
     if (!match) {
       return
     }
@@ -1119,10 +1366,17 @@ async function fetchLatestProspects(): Promise<ProspectsLatestResponse> {
 }
 
 function pitcherListApiPlugin(): Plugin {
-  const route = '/api/pitcher-list/latest'
+  const latestRoute = '/api/pitcher-list/latest'
+  const historyRoute = '/api/pitcher-list/history'
 
   const middleware = async (req: { url?: string }, res: { setHeader: (name: string, value: string) => void; statusCode: number; end: (body?: string) => void }) => {
-    if (!req.url || !req.url.startsWith(route)) {
+    if (!req.url) {
+      return
+    }
+
+    const requestUrl = new URL(req.url, 'http://localhost')
+    const requestPath = requestUrl.pathname
+    if (requestPath !== latestRoute && requestPath !== historyRoute) {
       return
     }
 
@@ -1137,9 +1391,40 @@ function pitcherListApiPlugin(): Plugin {
       )
       console.log(`[pitcher-list] selected article URL: ${latestArticleUrl}`)
       const articleHtml = await fetchHtml(latestArticleUrl)
-      const payload = parsePitcherListArticle(latestArticleUrl, articleHtml)
+      const latestPayload = parsePitcherListArticle(latestArticleUrl, articleHtml)
+
+      if (requestPath === historyRoute) {
+        let existingHistory: PitcherListHistoryResponse | null = null
+
+        // Prefer the local backfilled file; fall back to deployed snapshot.
+        const localHistoryPath = path.resolve(process.cwd(), 'dist', 'api', 'pitcher-list', 'history.json')
+        try {
+          const raw = await readFile(localHistoryPath, 'utf8')
+          existingHistory = JSON.parse(raw) as PitcherListHistoryResponse
+          console.log(`[pitcher-list] loaded local history (${existingHistory.snapshots.length} snapshots)`)
+        } catch {
+          const historyUrl = buildProductionSnapshotUrl('pitcher-list/history.json')
+          try {
+            existingHistory = await fetchJsonSnapshot<PitcherListHistoryResponse>(historyUrl)
+          } catch {
+            existingHistory = null
+          }
+        }
+
+        const payload: PitcherListHistoryResponse = {
+          snapshots: upsertHistorySnapshots(
+            existingHistory?.snapshots,
+            toPitcherHistorySnapshot(latestPayload)
+          ),
+        }
+
+        res.statusCode = 200
+        res.end(JSON.stringify(payload))
+        return
+      }
+
       res.statusCode = 200
-      res.end(JSON.stringify(payload))
+      res.end(JSON.stringify(latestPayload))
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown scraper error'
       res.statusCode = 500
@@ -1170,17 +1455,23 @@ function pitcherListApiPlugin(): Plugin {
 }
 
 function reliefListApiPlugin(): Plugin {
-  const route = '/api/relief-list/latest'
+  const latestRoute = '/api/relief-list/latest'
+  const historyRoute = '/api/relief-list/history'
 
   const middleware = async (req: { url?: string }, res: { setHeader: (name: string, value: string) => void; statusCode: number; end: (body?: string) => void }) => {
-    if (!req.url || !req.url.startsWith(route)) {
+    if (!req.url) {
+      return
+    }
+
+    const requestUrl = new URL(req.url, 'http://localhost')
+    const requestPath = requestUrl.pathname
+    if (requestPath !== latestRoute && requestPath !== historyRoute) {
       return
     }
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
 
     try {
-      const requestUrl = new URL(req.url, 'http://localhost')
       const mode: ReliefScoringMode =
         requestUrl.searchParams.get('scoring') === 'saves' ? 'saves' : 'svhld'
 
@@ -1192,9 +1483,42 @@ function reliefListApiPlugin(): Plugin {
       )
       console.log(`[relief-list] selected article URL: ${latestArticleUrl}`)
       const articleHtml = await fetchHtml(latestArticleUrl)
-      const payload = parseReliefListArticle(latestArticleUrl, articleHtml, mode)
+      const latestPayload = parseReliefListArticle(latestArticleUrl, articleHtml, mode)
+
+      if (requestPath === historyRoute) {
+        const historyRelativePath =
+          mode === 'saves' ? 'relief-list/history.saves.json' : 'relief-list/history.svhld.json'
+        let existingHistory: ReliefListHistoryResponse | null = null
+
+        // Prefer the local backfilled file; fall back to deployed snapshot.
+        const localHistoryPath = path.resolve(process.cwd(), 'dist', 'api', historyRelativePath)
+        try {
+          const raw = await readFile(localHistoryPath, 'utf8')
+          existingHistory = JSON.parse(raw) as ReliefListHistoryResponse
+          console.log(`[relief-list] loaded local history (${existingHistory.snapshots.length} snapshots)`)
+        } catch {
+          const historyUrl = buildProductionSnapshotUrl(historyRelativePath)
+          try {
+            existingHistory = await fetchJsonSnapshot<ReliefListHistoryResponse>(historyUrl)
+          } catch {
+            existingHistory = null
+          }
+        }
+
+        const payload: ReliefListHistoryResponse = {
+          snapshots: upsertHistorySnapshots(
+            existingHistory?.snapshots,
+            toReliefHistorySnapshot(latestPayload)
+          ),
+        }
+
+        res.statusCode = 200
+        res.end(JSON.stringify(payload))
+        return
+      }
+
       res.statusCode = 200
-      res.end(JSON.stringify(payload))
+      res.end(JSON.stringify(latestPayload))
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown scraper error'
       res.statusCode = 500
@@ -1207,6 +1531,49 @@ function reliefListApiPlugin(): Plugin {
 
   return {
     name: 'relief-list-api',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        middleware(req, res).then(() => {
+          if (!res.writableEnded) next()
+        })
+      })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        middleware(req, res).then(() => {
+          if (!res.writableEnded) next()
+        })
+      })
+    },
+  }
+}
+
+function injuredPitchersApiPlugin(): Plugin {
+  const route = '/api/injured-pitchers/latest'
+
+  const middleware = async (req: { url?: string }, res: { setHeader: (name: string, value: string) => void; statusCode: number; end: (body?: string) => void }) => {
+    if (!req.url || !req.url.startsWith(route)) {
+      return
+    }
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+    try {
+      const payload = await fetchLatestInjuredPitchers()
+      res.statusCode = 200
+      res.end(JSON.stringify(payload))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown scraper error'
+      res.statusCode = 500
+      res.end(JSON.stringify({
+        error: 'injured_pitchers_scrape_failed',
+        message,
+      }))
+    }
+  }
+
+  return {
+    name: 'injured-pitchers-api',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         middleware(req, res).then(() => {
@@ -1278,6 +1645,7 @@ function staticApiSnapshotPlugin(): Plugin {
       await mkdir(path.join(outputDir, 'pitcher-list'), { recursive: true })
       await mkdir(path.join(outputDir, 'relief-list'), { recursive: true })
       await mkdir(path.join(outputDir, 'prospects'), { recursive: true })
+      await mkdir(path.join(outputDir, 'injured-pitchers'), { recursive: true })
 
       const refreshTarget = normalizeSnapshotRefreshTarget(process.env.RANKING_REFRESH_TARGET)
       const refreshPitcher = refreshTarget !== 'relief'
@@ -1290,6 +1658,7 @@ function staticApiSnapshotPlugin(): Plugin {
         await writeFile(path.join(outputDir, relativePath), JSON.stringify(payload), 'utf8')
       }
 
+      let pitcherPayload: PitcherListLatestResponse
       if (refreshPitcher) {
         const pitcherCategoryHtml = await fetchHtml(PITCHER_LIST_CATEGORY_URL)
         const pitcherArticleUrl = extractLatestArticleUrl(
@@ -1299,14 +1668,12 @@ function staticApiSnapshotPlugin(): Plugin {
         )
         console.log(`[snapshot] selected pitcher article URL: ${pitcherArticleUrl}`)
         const pitcherArticleHtml = await fetchHtml(pitcherArticleUrl)
-        const pitcherPayload = parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
-        await writeJsonSnapshot(path.join('pitcher-list', 'latest.json'), pitcherPayload)
+        pitcherPayload = parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
       } else {
         const pitcherSnapshotUrl = buildProductionSnapshotUrl('pitcher-list/latest.json')
         try {
-          const pitcherPayload = await fetchJsonSnapshot<PitcherListLatestResponse>(pitcherSnapshotUrl)
+          pitcherPayload = await fetchJsonSnapshot<PitcherListLatestResponse>(pitcherSnapshotUrl)
           console.log(`[snapshot] reusing deployed pitcher snapshot: ${pitcherSnapshotUrl}`)
-          await writeJsonSnapshot(path.join('pitcher-list', 'latest.json'), pitcherPayload)
         } catch (error) {
           console.warn(
             `[snapshot] fallback failed for pitcher snapshot (${pitcherSnapshotUrl}), scraping live instead: ${error instanceof Error ? error.message : String(error)}`
@@ -1318,11 +1685,80 @@ function staticApiSnapshotPlugin(): Plugin {
             'Unable to find latest starting pitcher rankings article URL'
           )
           const pitcherArticleHtml = await fetchHtml(pitcherArticleUrl)
-          const pitcherPayload = parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
-          await writeJsonSnapshot(path.join('pitcher-list', 'latest.json'), pitcherPayload)
+          pitcherPayload = parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
+        }
+      }
+      await writeJsonSnapshot(path.join('pitcher-list', 'latest.json'), pitcherPayload)
+
+      const pitcherHistoryUrl = buildProductionSnapshotUrl('pitcher-list/history.json')
+      let existingPitcherHistory: PitcherListHistoryResponse | null = null
+      try {
+        existingPitcherHistory = await fetchJsonSnapshot<PitcherListHistoryResponse>(pitcherHistoryUrl)
+      } catch (error) {
+        console.warn(
+          `[snapshot] history seed unavailable for pitcher (${pitcherHistoryUrl}): ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+
+      // Backfill: scrape past articles when history is too sparse to build 8-week trend
+      const pitcherBackfillSnapshots: PitcherListHistorySnapshot[] = []
+      const existingPitcherCount = existingPitcherHistory?.snapshots?.length ?? 0
+      if (refreshPitcher && existingPitcherCount < HISTORY_BACKFILL_TARGET) {
+        const needed = HISTORY_BACKFILL_TARGET - existingPitcherCount
+        console.log(
+          `[snapshot] pitcher history has ${existingPitcherCount} snapshot(s); backfilling up to ${needed} past article(s)`
+        )
+        try {
+          const catHtml = await fetchHtml(PITCHER_LIST_CATEGORY_URL)
+          const allUrls = extractMultipleArticleUrls(
+            catHtml,
+            /\/top-100-starting-pitchers-for-[^/]+\/?$/i,
+            'Unable to find pitcher rankings article URLs',
+            HISTORY_BACKFILL_TARGET + 1
+          )
+          const latestPath = new URL(pitcherPayload.source_url).pathname.toLowerCase()
+          const pastUrls = allUrls
+            .filter((url) => {
+              try {
+                return new URL(url).pathname.toLowerCase() !== latestPath
+              } catch {
+                return true
+              }
+            })
+            .slice(0, needed)
+
+          for (const url of pastUrls) {
+            try {
+              const html = await fetchHtml(url)
+              const parsed = parsePitcherListArticle(url, html)
+              const snapshot = toPitcherHistorySnapshot(parsed)
+              pitcherBackfillSnapshots.push(snapshot)
+              console.log(`[snapshot] backfilled pitcher article: ${url} → ${snapshot.snapshot_date}`)
+            } catch (err) {
+              console.warn(
+                `[snapshot] failed to backfill pitcher article ${url}: ${
+                  err instanceof Error ? err.message : String(err)
+                }`
+              )
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[snapshot] pitcher backfill failed: ${err instanceof Error ? err.message : String(err)}`
+          )
         }
       }
 
+      const pitcherHistoryPayload: PitcherListHistoryResponse = {
+        snapshots: upsertHistorySnapshots(
+          [...(existingPitcherHistory?.snapshots ?? []), ...pitcherBackfillSnapshots],
+          toPitcherHistorySnapshot(pitcherPayload)
+        ),
+      }
+      await writeJsonSnapshot(path.join('pitcher-list', 'history.json'), pitcherHistoryPayload)
+
+      let svhldPayload: ReliefListLatestResponse
+      let savesPayload: ReliefListLatestResponse
       if (refreshRelief) {
         const reliefCategoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL_SVHLD)
         const reliefArticleUrl = extractLatestArticleUrl(
@@ -1332,21 +1768,17 @@ function staticApiSnapshotPlugin(): Plugin {
         )
         console.log(`[snapshot] selected relief article URL: ${reliefArticleUrl}`)
         const reliefArticleHtml = await fetchHtml(reliefArticleUrl)
-        const svhldPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld')
-        const savesPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves')
-        await writeJsonSnapshot(path.join('relief-list', 'latest.svhld.json'), svhldPayload)
-        await writeJsonSnapshot(path.join('relief-list', 'latest.saves.json'), savesPayload)
+        svhldPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld')
+        savesPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves')
       } else {
         const svhldSnapshotUrl = buildProductionSnapshotUrl('relief-list/latest.svhld.json')
         const savesSnapshotUrl = buildProductionSnapshotUrl('relief-list/latest.saves.json')
         try {
-          const [svhldPayload, savesPayload] = await Promise.all([
+          ;[svhldPayload, savesPayload] = await Promise.all([
             fetchJsonSnapshot<ReliefListLatestResponse>(svhldSnapshotUrl),
             fetchJsonSnapshot<ReliefListLatestResponse>(savesSnapshotUrl),
           ])
           console.log(`[snapshot] reusing deployed relief snapshots: ${svhldSnapshotUrl}, ${savesSnapshotUrl}`)
-          await writeJsonSnapshot(path.join('relief-list', 'latest.svhld.json'), svhldPayload)
-          await writeJsonSnapshot(path.join('relief-list', 'latest.saves.json'), savesPayload)
         } catch (error) {
           console.warn(
             `[snapshot] fallback failed for relief snapshots, scraping live instead: ${error instanceof Error ? error.message : String(error)}`
@@ -1358,11 +1790,117 @@ function staticApiSnapshotPlugin(): Plugin {
             'Unable to find latest reliever rankings article URL'
           )
           const reliefArticleHtml = await fetchHtml(reliefArticleUrl)
-          const svhldPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld')
-          const savesPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves')
-          await writeJsonSnapshot(path.join('relief-list', 'latest.svhld.json'), svhldPayload)
-          await writeJsonSnapshot(path.join('relief-list', 'latest.saves.json'), savesPayload)
+          svhldPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld')
+          savesPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves')
         }
+      }
+      await writeJsonSnapshot(path.join('relief-list', 'latest.svhld.json'), svhldPayload)
+      await writeJsonSnapshot(path.join('relief-list', 'latest.saves.json'), savesPayload)
+
+      const svhldHistoryUrl = buildProductionSnapshotUrl('relief-list/history.svhld.json')
+      const savesHistoryUrl = buildProductionSnapshotUrl('relief-list/history.saves.json')
+      let existingSvhldHistory: ReliefListHistoryResponse | null = null
+      let existingSavesHistory: ReliefListHistoryResponse | null = null
+
+      try {
+        existingSvhldHistory = await fetchJsonSnapshot<ReliefListHistoryResponse>(svhldHistoryUrl)
+      } catch (error) {
+        console.warn(
+          `[snapshot] history seed unavailable for relief svhld (${svhldHistoryUrl}): ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+
+      try {
+        existingSavesHistory = await fetchJsonSnapshot<ReliefListHistoryResponse>(savesHistoryUrl)
+      } catch (error) {
+        console.warn(
+          `[snapshot] history seed unavailable for relief saves (${savesHistoryUrl}): ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+
+      // Backfill: scrape past articles when relief history is too sparse to build 8-week trend
+      const reliefBackfillSvhld: ReliefListHistorySnapshot[] = []
+      const reliefBackfillSaves: ReliefListHistorySnapshot[] = []
+      const existingSvhldCount = existingSvhldHistory?.snapshots?.length ?? 0
+      const existingSavesCount = existingSavesHistory?.snapshots?.length ?? 0
+      const reliefNeeded = Math.max(
+        HISTORY_BACKFILL_TARGET - existingSvhldCount,
+        HISTORY_BACKFILL_TARGET - existingSavesCount
+      )
+      if (refreshRelief && reliefNeeded > 0) {
+        console.log(
+          `[snapshot] relief history has ${existingSvhldCount}/${existingSavesCount} svhld/saves snapshot(s); backfilling up to ${reliefNeeded} past article(s)`
+        )
+        try {
+          const reliefCatHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL_SVHLD)
+          const allReliefUrls = extractMultipleArticleUrls(
+            reliefCatHtml,
+            /\/fantasy-reliever-rankings-closers-holds-solds-[^/]+\/?$/i,
+            'Unable to find reliever rankings article URLs',
+            HISTORY_BACKFILL_TARGET + 1
+          )
+          const latestReliefPath = new URL(svhldPayload.source_url).pathname.toLowerCase()
+          const pastReliefUrls = allReliefUrls
+            .filter((url) => {
+              try {
+                return new URL(url).pathname.toLowerCase() !== latestReliefPath
+              } catch {
+                return true
+              }
+            })
+            .slice(0, reliefNeeded)
+
+          for (const url of pastReliefUrls) {
+            try {
+              const html = await fetchHtml(url)
+              const svhldSnap = toReliefHistorySnapshot(parseReliefListArticle(url, html, 'svhld'))
+              const savesSnap = toReliefHistorySnapshot(parseReliefListArticle(url, html, 'saves'))
+              reliefBackfillSvhld.push(svhldSnap)
+              reliefBackfillSaves.push(savesSnap)
+              console.log(`[snapshot] backfilled relief article: ${url} → ${svhldSnap.snapshot_date}`)
+            } catch (err) {
+              console.warn(
+                `[snapshot] failed to backfill relief article ${url}: ${
+                  err instanceof Error ? err.message : String(err)
+                }`
+              )
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[snapshot] relief backfill failed: ${err instanceof Error ? err.message : String(err)}`
+          )
+        }
+      }
+
+      const svhldHistoryPayload: ReliefListHistoryResponse = {
+        snapshots: upsertHistorySnapshots(
+          [...(existingSvhldHistory?.snapshots ?? []), ...reliefBackfillSvhld],
+          toReliefHistorySnapshot(svhldPayload)
+        ),
+      }
+      const savesHistoryPayload: ReliefListHistoryResponse = {
+        snapshots: upsertHistorySnapshots(
+          [...(existingSavesHistory?.snapshots ?? []), ...reliefBackfillSaves],
+          toReliefHistorySnapshot(savesPayload)
+        ),
+      }
+
+      await writeJsonSnapshot(path.join('relief-list', 'history.svhld.json'), svhldHistoryPayload)
+      await writeJsonSnapshot(path.join('relief-list', 'history.saves.json'), savesHistoryPayload)
+
+      try {
+        const injuredPayload = await fetchLatestInjuredPitchers()
+        await writeJsonSnapshot(path.join('injured-pitchers', 'latest.json'), injuredPayload)
+      } catch (error) {
+        const injuredSnapshotUrl = buildProductionSnapshotUrl('injured-pitchers/latest.json')
+        console.warn(
+          `[snapshot] injured scrape failed, trying deployed snapshot (${injuredSnapshotUrl}): ${error instanceof Error ? error.message : String(error)}`
+        )
+        const injuredPayload = await fetchJsonSnapshot<InjuredPitchersLatestResponse>(
+          injuredSnapshotUrl
+        )
+        await writeJsonSnapshot(path.join('injured-pitchers', 'latest.json'), injuredPayload)
       }
 
       if (refreshProspects) {
@@ -1393,6 +1931,7 @@ export default defineConfig({
     tailwindcss(),
     pitcherListApiPlugin(),
     reliefListApiPlugin(),
+    injuredPitchersApiPlugin(),
     prospectsApiPlugin(),
     staticApiSnapshotPlugin(),
   ],

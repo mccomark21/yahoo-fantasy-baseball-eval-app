@@ -12,7 +12,7 @@ import { useIsMobile } from '@/lib/use-mobile';
 import type { TrendDirection } from '@/lib/pitcherlist-client';
 import type { PitcherTrendRow } from '@/lib/queries';
 
-type PitcherSortKey = 'latest_rank' | 'movement_value' | 'player_name' | 'fantasy_team';
+type PitcherSortKey = 'latest_rank' | 'movement_value' | 'trend_8w_net' | 'player_name' | 'fantasy_team';
 
 interface PitcherTableProps {
   data: PitcherTrendRow[];
@@ -29,11 +29,90 @@ function trendPillClass(direction: TrendDirection): string {
   return 'bg-muted text-muted-foreground';
 }
 
+function movementSortValue(row: PitcherTrendRow): number {
+  if (row.movement_value == null) {
+    if (row.trend_direction === 'new') return 1000;
+    return Number.NEGATIVE_INFINITY;
+  }
+  return row.movement_value;
+}
+
 function getSortValue(row: PitcherTrendRow, key: PitcherSortKey): number | string {
   if (key === 'latest_rank') return row.latest_rank;
-  if (key === 'movement_value') return row.movement_value ?? Number.NEGATIVE_INFINITY;
+  if (key === 'movement_value') return movementSortValue(row);
+  if (key === 'trend_8w_net') return row.trend_8w_net ?? Number.NEGATIVE_INFINITY;
   if (key === 'fantasy_team') return row.fantasy_team ?? 'zzzz';
   return row.player_name;
+}
+
+function TrendSparkline({ series }: { series: (number | null)[] }) {
+  const defined = series.filter((v): v is number => v != null);
+  if (defined.length < 2) {
+    return <div className="h-6 w-16 text-[11px] text-muted-foreground">n/a</div>;
+  }
+
+  const first = defined[0];
+  const last = defined[defined.length - 1];
+  // Lower rank = better, so improvement means end < start
+  const color = last < first ? '#22c55e' : last > first ? '#ef4444' : '#6b7280';
+
+  const width = 64;
+  const height = 24;
+  const pad = 2;
+  const min = Math.min(...defined);
+  const max = Math.max(...defined);
+  const range = Math.max(1, max - min);
+  const n = series.length;
+
+  const getX = (idx: number) => pad + ((width - pad * 2) * idx) / Math.max(1, n - 1);
+  const getY = (value: number) => pad + ((height - pad * 2) * (value - min)) / range;
+
+  // Split into contiguous segments, leaving gaps where value is null
+  const segments: string[][] = [];
+  let current: string[] = [];
+  series.forEach((value, idx) => {
+    if (value == null) {
+      if (current.length > 0) {
+        segments.push(current);
+        current = [];
+      }
+    } else {
+      current.push(`${getX(idx)},${getY(value)}`);
+    }
+  });
+  if (current.length > 0) segments.push(current);
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      className="shrink-0"
+      aria-hidden="true"
+    >
+      {segments.map((pts, i) =>
+        pts.length === 1 ? (
+          <circle
+            key={i}
+            cx={pts[0].split(',')[0]}
+            cy={pts[0].split(',')[1]}
+            r="1.5"
+            fill={color}
+          />
+        ) : (
+          <polyline
+            key={i}
+            fill="none"
+            stroke={color}
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            points={pts.join(' ')}
+          />
+        )
+      )}
+    </svg>
+  );
 }
 
 export function PitcherTable({ data, isLoading }: PitcherTableProps) {
@@ -65,7 +144,7 @@ export function PitcherTable({ data, isLoading }: PitcherTableProps) {
       return;
     }
     setSortKey(key);
-    setSortDesc(key === 'movement_value');
+    setSortDesc(key === 'trend_8w_net' || key === 'movement_value');
   };
 
   const sortIcon = (key: PitcherSortKey) => {
@@ -120,13 +199,16 @@ export function PitcherTable({ data, isLoading }: PitcherTableProps) {
                     </div>
                   </div>
                   <div className="text-right">
-                    <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium font-mono tabular-nums ${trendPillClass(row.trend_direction)}`}>
+                    <span className={`inline-flex rounded px-1.5 py-0.5 text-[11px] font-medium font-mono tabular-nums ${trendPillClass(row.trend_direction)}`}>
                       {row.movement_raw}
                     </span>
                     <div className="text-[11px] mt-1 text-muted-foreground">
-                      {row.fantasy_team ?? 'Not Found'}
+                      8W: {row.trend_start_rank != null && row.trend_end_rank != null ? `${row.trend_start_rank} -> ${row.trend_end_rank}` : 'n/a'}
                     </div>
                   </div>
+                </div>
+                <div className="mt-2">
+                  <TrendSparkline series={row.trend_8w_series} />
                 </div>
                 {isExpanded ? (
                   <div className="mt-2 text-xs leading-5 text-muted-foreground">
@@ -157,7 +239,10 @@ export function PitcherTable({ data, isLoading }: PitcherTableProps) {
               </TableHead>
               <TableHead>MLB</TableHead>
               <TableHead className="cursor-pointer select-none" onClick={() => setSort('movement_value')}>
-                <div className="flex items-center gap-1">Movement {sortIcon('movement_value')}</div>
+                <div className="flex items-center gap-1">This Week {sortIcon('movement_value')}</div>
+              </TableHead>
+              <TableHead className="cursor-pointer select-none" onClick={() => setSort('trend_8w_net')}>
+                <div className="flex items-center gap-1">Trend (8W) {sortIcon('trend_8w_net')}</div>
               </TableHead>
               <TableHead className="cursor-pointer select-none" onClick={() => setSort('fantasy_team')}>
                 <div className="flex items-center gap-1">Fantasy Team {sortIcon('fantasy_team')}</div>
@@ -173,9 +258,14 @@ export function PitcherTable({ data, isLoading }: PitcherTableProps) {
                   <TableCell className="font-medium">{row.player_name}</TableCell>
                   <TableCell>{row.mlb_team ?? '—'}</TableCell>
                   <TableCell>
-                    <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium font-mono tabular-nums ${trendPillClass(row.trend_direction)}`}>
+                    <span className={`inline-flex rounded px-1.5 py-0.5 text-[11px] font-medium font-mono tabular-nums ${trendPillClass(row.trend_direction)}`}>
                       {row.movement_raw}
                     </span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2" title={row.trend_start_rank != null && row.trend_end_rank != null ? `${row.trend_start_rank} -> ${row.trend_end_rank}` : 'Insufficient history'}>
+                      <TrendSparkline series={row.trend_8w_series} />
+                    </div>
                   </TableCell>
                   <TableCell>{row.fantasy_team ?? 'Not Found'}</TableCell>
                   <TableCell className="max-w-md text-xs leading-5 text-muted-foreground whitespace-normal">
@@ -185,7 +275,7 @@ export function PitcherTable({ data, isLoading }: PitcherTableProps) {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No results.</TableCell>
+                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No results.</TableCell>
               </TableRow>
             )}
           </TableBody>

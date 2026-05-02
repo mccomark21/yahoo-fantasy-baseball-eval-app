@@ -26,7 +26,9 @@ A browser-based tool for evaluating **hitters, starting pitchers, relievers, and
 ### Pitchers
 
 - Uses latest Pitcher List Top 100 starting pitcher rankings
-- Displays rank movement and notes alongside Yahoo fantasy-team context
+- Displays separate trend columns:
+	- **This Week**: weekly article movement badge (`up`/`down`/`same`/`new`)
+	- **Trend (8W)**: compact rank sparkline from the latest 8 weekly snapshots
 - Supports league/team filtering to focus available or rostered arms
 
 ### Relievers
@@ -35,7 +37,15 @@ A browser-based tool for evaluating **hitters, starting pitchers, relievers, and
 	- `svhld` (saves + holds)
 	- `saves`
 - Scoring mode is inferred from league name (with `svhld` fallback when unmatched)
-- Displays rank movement and notes with league/team context
+- Displays the same split trend model as SP rankings:
+	- **This Week** badge for weekly article movement
+	- **Trend (8W)** sparkline for multi-week rank direction
+
+### Injured Pitchers
+
+- Combines SP and RP article sections titled **"Injured Pitchers Who Will Be Considered When Healthy"**
+- Shows relative rank when healthy, role (`SP` or `RP`), team context, and injury notes
+- Supports the same league/team filtering and player search workflow
 
 ### Prospects
 
@@ -63,7 +73,7 @@ The app joins Yahoo and PyBaseball data in-browser and enriches pitcher views wi
 |--------|--------|------------|
 | **Yahoo Fantasy Rosters** — league name, fantasy team, player name, MLB team, eligible positions | CSV | [mccomark21/yahoo-fantasy-data-hub](https://github.com/mccomark21/yahoo-fantasy-data-hub) |
 | **PyBaseball Batter Game Logs** — per-game StatCast metrics (xwOBA, batted-ball data, plate discipline, etc.) | Parquet | [mccomark21/pybaseball-data-hub](https://github.com/mccomark21/pybaseball-data-hub) |
-| **Pitcher List Rankings** — latest starting pitcher and reliever ranking articles | HTML -> JSON | [pitcherlist.com](https://pitcherlist.com/) |
+| **Pitcher List Rankings** — latest starting pitcher, reliever, and injured-pitcher ranking tables | HTML -> JSON | [pitcherlist.com](https://pitcherlist.com/) |
 
 The Yahoo and PyBaseball source files are fetched at startup and cached in **IndexedDB** with a 4-hour TTL to avoid redundant downloads on page reload.
 
@@ -78,15 +88,23 @@ The app uses different ranking data behavior in local development versus product
 - **Local development (`npm run dev`)**
 	- Vite middleware serves live scrape endpoints:
 		- `/api/pitcher-list/latest`
+		- `/api/pitcher-list/history`
 		- `/api/relief-list/latest?scoring=svhld|saves`
+		- `/api/relief-list/history?scoring=svhld|saves`
+		- `/api/injured-pitchers/latest`
 
 - **Production build (`npm run build`)**
 	- A Vite build plugin scrapes and writes static snapshots to:
 		- `dist/api/pitcher-list/latest.json`
+		- `dist/api/pitcher-list/history.json`
 		- `dist/api/relief-list/latest.svhld.json`
 		- `dist/api/relief-list/latest.saves.json`
+		- `dist/api/relief-list/history.svhld.json`
+		- `dist/api/relief-list/history.saves.json`
+		- `dist/api/injured-pitchers/latest.json`
 		- `dist/api/prospects/latest.json`
 	- The client reads these static JSON assets in production (GitHub Pages compatible)
+	- Pitcher/reliever history snapshots are retained as a rolling 12-snapshot series for trend rendering
 
 ### Scheduled Refresh Cadence (Production)
 

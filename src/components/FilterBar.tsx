@@ -15,7 +15,7 @@ import { useIsMobile } from '@/lib/use-mobile';
 import { getDefaultRosterTeams } from '@/lib/fantasy-teams';
 
 interface FilterBarProps {
-  mode: 'hitters' | 'pitchers' | 'relievers' | 'prospects';
+  mode: 'hitters' | 'pitchers' | 'relievers' | 'injured' | 'prospects';
   filterOptions: FilterOptions;
   leagueFantasyTeams: string[];
   selectedLeague: string | null;
@@ -30,6 +30,8 @@ interface FilterBarProps {
   onPitcherTeamsChange: (values: string[]) => void;
   selectedReliefTeams: string[];
   onReliefTeamsChange: (values: string[]) => void;
+  selectedInjuredTeams: string[];
+  onInjuredTeamsChange: (values: string[]) => void;
   selectedProspectTeams: string[];
   onProspectTeamsChange: (values: string[]) => void;
   selectedProspectMaxAge: number | null;
@@ -64,6 +66,8 @@ export function FilterBar({
   onPitcherTeamsChange,
   selectedReliefTeams,
   onReliefTeamsChange,
+  selectedInjuredTeams,
+  onInjuredTeamsChange,
   selectedProspectTeams,
   onProspectTeamsChange,
   selectedProspectMaxAge,
@@ -92,6 +96,8 @@ export function FilterBar({
         ? selectedPitcherTeams
         : mode === 'relievers'
           ? selectedReliefTeams
+          : mode === 'injured'
+            ? selectedInjuredTeams
           : selectedProspectTeams;
   const hasDefaultRosterFocus =
     defaultRosterTeams.length > 0 &&
@@ -107,6 +113,7 @@ export function FilterBar({
     (mode === 'prospects' && selectedProspectLevels.length > 0 ? 1 : 0) +
     ((mode === 'pitchers' && selectedPitcherTeams.length > 0) ||
     (mode === 'relievers' && selectedReliefTeams.length > 0) ||
+    (mode === 'injured' && selectedInjuredTeams.length > 0) ||
     (mode === 'prospects' && selectedProspectTeams.length > 0)
       ? 1
       : 0);
@@ -286,6 +293,24 @@ export function FilterBar({
               </div>
             )}
 
+            {mode === 'injured' && (
+              <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
+                <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
+                <MultiSelect
+                  options={leagueFantasyTeams}
+                  selected={selectedInjuredTeams}
+                  onChange={onInjuredTeamsChange}
+                  placeholder="All Teams"
+                  selectAllLabel="Select All Teams"
+                />
+                {hasDefaultRosterFocus && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Default roster focus active (Free Agent)
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Time Window toggle */}
             {mode === 'hitters' && (
               <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
@@ -316,6 +341,8 @@ export function FilterBar({
                     ? 'Pitcher Name'
                     : mode === 'relievers'
                       ? 'Reliever Name'
+                      : mode === 'injured'
+                        ? 'Pitcher Name'
                       : 'Prospect Name'}
               </label>
               <Input
