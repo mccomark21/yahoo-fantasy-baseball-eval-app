@@ -81,6 +81,34 @@ Yahoo roster data is additionally constrained to same-local-day cache reuse, so 
 
 Yahoo hitter rows are deduplicated by player within each league (keeping the latest source row) so cross-league membership does not suppress league-specific hitter visibility.
 
+## System Architecture
+
+```mermaid
+flowchart LR
+	Users[User Filters and View Selection]
+	UI[React UI Tables\nHitters Pitchers Relievers Injured Prospects]
+	Orch[View Orchestration\nmode-specific query runners]
+	Query[Analytics and Query Layer\nscoring trends and filtering]
+	Data[DuckDB WASM + IndexedDB Cache]
+	External[Yahoo CSV + PyBaseball Parquet]
+	Rankings[Pitcher List + Prospect Sources]
+	Build[Build-Time Scraping\nVite plugin to dist/api JSON]
+
+	Users --> UI --> Orch --> Query --> Data
+	External --> Data
+	Rankings --> Build --> Query
+
+	classDef runtime fill:#e9f4ff,stroke:#4a90e2,color:#0b2948;
+	classDef source fill:#fff7e8,stroke:#d68a00,color:#4d2f00;
+	classDef build fill:#edf9ef,stroke:#2f9e44,color:#103a1b;
+
+	class UI,Orch,Query,Data runtime;
+	class External,Rankings source;
+	class Build build;
+```
+
+The runtime path is left-to-right: user input drives view orchestration, queries run against DuckDB with cached source data, and results render in the active table. Ranking feeds come from build-time scraping in production and Vite middleware during local development.
+
 ## Build and Runtime API Behavior
 
 The app uses different ranking data behavior in local development versus production hosting:
