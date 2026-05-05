@@ -1,6 +1,14 @@
 ﻿import { useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import type { TimeWindow, FilterOptions } from '@/lib/queries';
+import type { FilterOptions } from '@/lib/queries';
+import type {
+  HitterFilters,
+  InjuredFilters,
+  PitcherFilters,
+  ProspectFilters,
+  ReliefFilters,
+  ViewFilters,
+} from '@/lib/view-filter-state';
 import {
   Select,
   SelectContent,
@@ -15,33 +23,17 @@ import { useIsMobile } from '@/lib/use-mobile';
 import { getDefaultRosterTeams } from '@/lib/fantasy-teams';
 
 interface FilterBarProps {
-  mode: 'hitters' | 'pitchers' | 'relievers' | 'injured' | 'prospects';
+  filters: ViewFilters;
+  onFiltersChange: (filters: ViewFilters) => void;
   filterOptions: FilterOptions;
   leagueFantasyTeams: string[];
   selectedLeague: string | null;
   onLeagueChange: (league: string | null) => void;
-  selectedTeams: string[];
-  onTeamsChange: (teams: string[]) => void;
-  selectedPositions: string[];
-  onPositionsChange: (positions: string[]) => void;
-  timeWindow: TimeWindow;
-  onTimeWindowChange: (tw: TimeWindow) => void;
-  selectedPitcherTeams: string[];
-  onPitcherTeamsChange: (values: string[]) => void;
-  selectedReliefTeams: string[];
-  onReliefTeamsChange: (values: string[]) => void;
-  selectedInjuredTeams: string[];
-  onInjuredTeamsChange: (values: string[]) => void;
-  selectedProspectTeams: string[];
-  onProspectTeamsChange: (values: string[]) => void;
-  selectedProspectMaxAge: number | null;
-  onProspectMaxAgeChange: (value: number | null) => void;
-  selectedProspectRosterFilter: 'all' | 'rostered' | 'available';
-  onProspectRosterFilterChange: (value: 'all' | 'rostered' | 'available') => void;
-  selectedProspectLevels: string[];
-  onProspectLevelsChange: (values: string[]) => void;
+  /** Dynamic age options derived from the loaded prospect data. */
   prospectAgeOptions: number[];
+  /** Dynamic level options derived from the loaded prospect data. */
   prospectLevelOptions: string[];
+  /** Dynamic position options derived from the loaded prospect data. */
   prospectPositions: string[];
   searchDraft: string;
   onSearchDraftChange: (value: string) => void;
@@ -51,31 +43,12 @@ interface FilterBarProps {
 const TIME_WINDOWS: TimeWindow[] = ['STD', '30D', '14D', '7D'];
 
 export function FilterBar({
-  mode,
+  filters,
+  onFiltersChange,
   filterOptions,
   leagueFantasyTeams,
   selectedLeague,
   onLeagueChange,
-  selectedTeams,
-  onTeamsChange,
-  selectedPositions,
-  onPositionsChange,
-  timeWindow,
-  onTimeWindowChange,
-  selectedPitcherTeams,
-  onPitcherTeamsChange,
-  selectedReliefTeams,
-  onReliefTeamsChange,
-  selectedInjuredTeams,
-  onInjuredTeamsChange,
-  selectedProspectTeams,
-  onProspectTeamsChange,
-  selectedProspectMaxAge,
-  onProspectMaxAgeChange,
-  selectedProspectRosterFilter,
-  onProspectRosterFilterChange,
-  selectedProspectLevels,
-  onProspectLevelsChange,
   prospectAgeOptions,
   prospectLevelOptions,
   prospectPositions,
@@ -85,20 +58,20 @@ export function FilterBar({
 }: FilterBarProps) {
   const isMobile = useIsMobile();
   const [isOpen, setIsOpen] = useState(false);
+  const mode = filters.mode;
+
+  // Narrow to per-view filter shapes for type-safe access inside JSX.
+  const hf = filters.mode === 'hitters' ? (filters as HitterFilters) : null;
+  const pf = filters.mode === 'pitchers' ? (filters as PitcherFilters) : null;
+  const rf = filters.mode === 'relievers' ? (filters as ReliefFilters) : null;
+  const inf = filters.mode === 'injured' ? (filters as InjuredFilters) : null;
+  const prpf = filters.mode === 'prospects' ? (filters as ProspectFilters) : null;
+
   const defaultRosterTeams = useMemo(
     () => getDefaultRosterTeams(leagueFantasyTeams),
     [leagueFantasyTeams]
   );
-  const activeTeamSelection =
-    mode === 'hitters'
-      ? selectedTeams
-      : mode === 'pitchers'
-        ? selectedPitcherTeams
-        : mode === 'relievers'
-          ? selectedReliefTeams
-          : mode === 'injured'
-            ? selectedInjuredTeams
-          : selectedProspectTeams;
+  const activeTeamSelection = filters.selectedTeams;
   const hasDefaultRosterFocus =
     defaultRosterTeams.length > 0 &&
     activeTeamSelection.length === defaultRosterTeams.length &&
@@ -106,17 +79,12 @@ export function FilterBar({
 
   const activeFilterCount =
     (activeTeamSelection.length > 0 ? 1 : 0) +
-    ((mode === 'hitters' || mode === 'prospects') && selectedPositions.length > 0 ? 1 : 0) +
-    (mode === 'hitters' && timeWindow !== 'STD' ? 1 : 0) +
-    (mode === 'prospects' && selectedProspectMaxAge != null ? 1 : 0) +
-    (mode === 'prospects' && selectedProspectRosterFilter !== 'all' ? 1 : 0) +
-    (mode === 'prospects' && selectedProspectLevels.length > 0 ? 1 : 0) +
-    ((mode === 'pitchers' && selectedPitcherTeams.length > 0) ||
-    (mode === 'relievers' && selectedReliefTeams.length > 0) ||
-    (mode === 'injured' && selectedInjuredTeams.length > 0) ||
-    (mode === 'prospects' && selectedProspectTeams.length > 0)
-      ? 1
-      : 0);
+    (hf != null && hf.selectedPositions.length > 0 ? 1 : 0) +
+    (prpf != null && prpf.selectedPositions.length > 0 ? 1 : 0) +
+    (hf != null && hf.timeWindow !== 'STD' ? 1 : 0) +
+    (prpf != null && prpf.maxAge != null ? 1 : 0) +
+    (prpf != null && prpf.rosterFilter !== 'all' ? 1 : 0) +
+    (prpf != null && prpf.selectedLevels.length > 0 ? 1 : 0);
 
   return (
     <div className="border-b bg-background">
@@ -167,14 +135,14 @@ export function FilterBar({
               </Select>
             </div>
 
-            {/* Fantasy Team multi-select */}
-            {(mode === 'hitters' || mode === 'prospects') && (
+            {/* Fantasy Team multi-select — hitters and prospects */}
+            {(hf != null || prpf != null) && (
               <div className="flex flex-col gap-1 w-full md:w-auto">
                 <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
                 <MultiSelect
                   options={leagueFantasyTeams}
-                  selected={mode === 'hitters' ? selectedTeams : selectedProspectTeams}
-                  onChange={mode === 'hitters' ? onTeamsChange : onProspectTeamsChange}
+                  selected={filters.selectedTeams}
+                  onChange={(teams) => onFiltersChange({ ...filters, selectedTeams: teams })}
                   placeholder="All Teams"
                 />
                 {hasDefaultRosterFocus && (
@@ -186,41 +154,41 @@ export function FilterBar({
             )}
 
             {/* Position multi-select */}
-            {(mode === 'hitters' || mode === 'prospects') && (
+            {(hf != null || prpf != null) && (
               <div className="flex flex-col gap-1 w-full md:w-auto">
                 <label className="text-xs font-medium text-muted-foreground">Position</label>
                 <MultiSelect
                   options={
-                    mode === 'hitters'
+                    hf != null
                       ? filterOptions.positions.filter((p) => p !== 'SP' && p !== 'RP')
                       : prospectPositions
                   }
-                  selected={selectedPositions}
-                  onChange={onPositionsChange}
+                  selected={hf != null ? hf.selectedPositions : (prpf?.selectedPositions ?? [])}
+                  onChange={(positions) => onFiltersChange({ ...filters, selectedPositions: positions } as HitterFilters | ProspectFilters)}
                   placeholder="All Positions"
                 />
               </div>
             )}
 
-            {mode === 'prospects' && prospectLevelOptions.length > 0 && (
+            {prpf != null && prospectLevelOptions.length > 0 && (
               <div className="flex flex-col gap-1 w-full md:w-auto">
                 <label className="text-xs font-medium text-muted-foreground">Level</label>
                 <MultiSelect
                   options={prospectLevelOptions}
-                  selected={selectedProspectLevels}
-                  onChange={onProspectLevelsChange}
+                  selected={prpf.selectedLevels}
+                  onChange={(levels) => onFiltersChange({ ...prpf, selectedLevels: levels })}
                   placeholder="All Levels"
                 />
               </div>
             )}
 
-            {mode === 'prospects' && (
+            {prpf != null && (
               <div className="flex flex-col gap-1 w-full md:w-[140px]">
                 <label className="text-xs font-medium text-muted-foreground">Rostered</label>
                 <Select
-                  value={selectedProspectRosterFilter}
+                  value={prpf.rosterFilter}
                   onValueChange={(value) =>
-                    onProspectRosterFilterChange(value as 'all' | 'rostered' | 'available')
+                    onFiltersChange({ ...prpf, rosterFilter: value as 'all' | 'rostered' | 'available' })
                   }
                 >
                   <SelectTrigger className="w-full md:w-[140px]">
@@ -235,12 +203,12 @@ export function FilterBar({
               </div>
             )}
 
-            {mode === 'prospects' && (
+            {prpf != null && (
               <div className="flex flex-col gap-1 w-full md:w-[140px]">
                 <label className="text-xs font-medium text-muted-foreground">Age ≤</label>
                 <Select
-                  value={selectedProspectMaxAge != null ? String(selectedProspectMaxAge) : 'any'}
-                  onValueChange={(value) => onProspectMaxAgeChange(value === 'any' ? null : Number(value))}
+                  value={prpf.maxAge != null ? String(prpf.maxAge) : 'any'}
+                  onValueChange={(value) => onFiltersChange({ ...prpf, maxAge: value === 'any' ? null : Number(value) })}
                 >
                   <SelectTrigger className="w-full md:w-[120px]">
                     <SelectValue placeholder="Any" />
@@ -257,49 +225,14 @@ export function FilterBar({
               </div>
             )}
 
-            {mode === 'pitchers' && (
+            {/* Fantasy Team multi-select — pitchers / relievers / injured (right-aligned) */}
+            {(pf != null || rf != null || inf != null) && (
               <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
                 <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
                 <MultiSelect
                   options={leagueFantasyTeams}
-                  selected={selectedPitcherTeams}
-                  onChange={onPitcherTeamsChange}
-                  placeholder="All Teams"
-                  selectAllLabel="Select All Teams"
-                />
-                {hasDefaultRosterFocus && (
-                  <p className="text-[11px] text-muted-foreground">
-                    Default roster focus active (Free Agent)
-                  </p>
-                )}
-              </div>
-            )}
-
-            {mode === 'relievers' && (
-              <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
-                <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
-                <MultiSelect
-                  options={leagueFantasyTeams}
-                  selected={selectedReliefTeams}
-                  onChange={onReliefTeamsChange}
-                  placeholder="All Teams"
-                  selectAllLabel="Select All Teams"
-                />
-                {hasDefaultRosterFocus && (
-                  <p className="text-[11px] text-muted-foreground">
-                    Default roster focus active (Free Agent)
-                  </p>
-                )}
-              </div>
-            )}
-
-            {mode === 'injured' && (
-              <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
-                <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
-                <MultiSelect
-                  options={leagueFantasyTeams}
-                  selected={selectedInjuredTeams}
-                  onChange={onInjuredTeamsChange}
+                  selected={filters.selectedTeams}
+                  onChange={(teams) => onFiltersChange({ ...filters, selectedTeams: teams })}
                   placeholder="All Teams"
                   selectAllLabel="Select All Teams"
                 />
@@ -312,15 +245,15 @@ export function FilterBar({
             )}
 
             {/* Time Window toggle */}
-            {mode === 'hitters' && (
+            {hf != null && (
               <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
                 <label className="text-xs font-medium text-muted-foreground">Time Window</label>
                 <ToggleGroup
-                  value={[timeWindow]}
+                  value={[hf.timeWindow]}
                   onValueChange={(newValue: string[]) => {
                     if (newValue.length > 0) {
                       const latest = newValue[newValue.length - 1];
-                      onTimeWindowChange(latest as TimeWindow);
+                      onFiltersChange({ ...hf, timeWindow: latest as HitterFilters['timeWindow'] });
                     }
                   }}
                 >

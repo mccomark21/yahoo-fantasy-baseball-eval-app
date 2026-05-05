@@ -1,4 +1,5 @@
 import { getDB } from './duckdb';
+import { normalizePlayerName } from './player-name-matcher';
 import type {
   InjuredPitcherRow,
   PitcherListHistorySnapshot,
@@ -9,6 +10,26 @@ import type {
   TrendDirection,
 } from './pitcherlist-client';
 import type { ProspectSourceRow } from './prospects-client';
+import {
+  applyFantasyTeamAndPlayerSearchFilters,
+  applyFantasyTeamFilter,
+  applyPlayerNameSearchFilter,
+  buildOwnerByNormName,
+  type OwnershipRecord,
+  type ProspectOwnership,
+} from './query-filter-pipeline';
+import {
+  buildRankRowsWithTrend,
+  buildRankTrendByNormName,
+} from './rank-trend';
+import {
+  computeWindowComposites,
+  Z_QUALITY_WEIGHTS,
+  Z_WINDOW_WEIGHTS as Z_SCORE_WEIGHTS,
+  Z_SCORE_DIRECTIONS,
+  Z_CLAMP,
+  type WindowRawMetrics,
+} from './hitter-composite-scorer';
 
 export type TimeWindow = 'STD' | '7D' | '14D' | '30D';
 export type ProspectStatsWindow = 'STD' | 'L7' | 'L14' | 'L30';
@@ -135,6 +156,8 @@ export interface ProspectRow {
   notes: string | null;
   minor_league_stats: Record<ProspectStatsWindow, ProspectMinorLeagueStats>;
 }
+
+type QueryConnection = Awaited<ReturnType<Awaited<ReturnType<typeof getDB>>['connect']>>;
 
 const VOLUME_THRESHOLD_PCT = 0.5;
 
@@ -454,52 +477,7 @@ export async function queryPlayers(
   }
 }
 
-type WindowRawMetrics = {
-  xwoba: number | null;
-  pull_air_pct: number | null;
-  bb_k: number | null;
-  sb: number | null;
-  pa: number | null;
-};
 
-function computeWindowComposites(
-  byNormName: Map<string, WindowRawMetrics>
-): Map<string, number | null> {
-  const metrics = ['xwoba', 'pull_air_pct', 'bb_k', 'sb', 'pa'] as const;
-  type MetricKey = (typeof metrics)[number];
-  const allRows = Array.from(byNormName.entries());
-
-  const stats = {} as Record<MetricKey, { mean: number; std: number }>;
-  for (const key of metrics) {
-    const vals = allRows.map(([, r]) => r[key]).filter((v): v is number => v != null);
-    if (vals.length < 2) {
-      stats[key] = { mean: 0, std: 0 };
-      continue;
-    }
-    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-    const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length;
-    stats[key] = { mean, std: Math.sqrt(variance) };
-  }
-
-  const result = new Map<string, number | null>();
-  for (const [normName, row] of allRows) {
-    let weightedSum = 0;
-    let weightSum = 0;
-    let hasAny = false;
-    for (const key of metrics) {
-      const val = row[key];
-      const { mean, std } = stats[key];
-      if (val == null || std === 0) continue;
-      const direction = Z_SCORE_DIRECTIONS[key];
-      const z = Math.max(-Z_CLAMP, Math.min(Z_CLAMP, direction * ((val - mean) / std)));
-      weightedSum += Z_SCORE_WEIGHTS[key] * z;
-      weightSum += Z_SCORE_WEIGHTS[key];
-      hasAny = true;
-    }
-    result.set(normName, hasAny ? Math.round((weightedSum / weightSum) * 100) / 100 : null);
-  }
-  return result;
-}
 
 async function getWindowCompositeScores(
   conn: Awaited<ReturnType<Awaited<ReturnType<typeof getDB>>['connect']>>,
@@ -768,34 +746,7 @@ export async function buildAccuracyCohort(
   }
 }
 
-// Weights for the additive quality blend (used for STD composite and window composites).
-// PA is NOT included here — it acts as a confidence multiplier on the STD composite instead.
-const Z_QUALITY_WEIGHTS = {
-  xwoba: 0.40,
-  pull_air_pct: 0.20,
-  bb_k: 0.30,
-  sb: 0.10,
-} as const;
 
-// Kept for window composites (L7/L14/L30) which still treat PA as an additive z-score,
-// since short windows naturally produce lower PA counts for everyone.
-const Z_SCORE_WEIGHTS = {
-  xwoba: 0.34,
-  pull_air_pct: 0.2,
-  bb_k: 0.26,
-  sb: 0.1,
-  pa: 0.1,
-} as const;
-
-const Z_SCORE_DIRECTIONS = {
-  xwoba: 1,
-  pull_air_pct: 1,
-  bb_k: 1,
-  sb: 1,
-  pa: 1,
-} as const;
-
-const Z_CLAMP = 2.5;
 
 export function computeZScores(rows: PlayerRow[]): PlayerRow[] {
   const metrics = ['xwoba', 'pull_air_pct', 'bb_k', 'sb', 'pa'] as const;
@@ -1047,100 +998,26 @@ function buildProspectSummary(args: {
   return truncateSummary(combined, 320);
 }
 
-export function normalizePlayerName(name: string): string {
-  let normalizedInput = name;
-  if (/[ÃÂ]/.test(normalizedInput)) {
-    try {
-      normalizedInput = decodeURIComponent(escape(normalizedInput));
-    } catch {
-      normalizedInput = name;
-    }
+// Re-export so existing importers don't need to change their import path.
+export { normalizePlayerName } from './player-name-matcher';
+
+async function loadOwnershipByNormName(
+  conn: QueryConnection,
+  selectedLeague: string | null
+): Promise<Map<string, ProspectOwnership>> {
+  let sql = 'SELECT league_name, fantasy_team, norm_name FROM yahoo';
+  if (selectedLeague) {
+    sql += ` WHERE league_name = '${escapeSQL(selectedLeague)}'`;
   }
 
-  return normalizedInput
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+(Jr\.?|Sr\.?|II|III|IV)$/i, '')
-    .replace(/[^a-zA-Z ]/g, '')
-    .toLowerCase()
-    .trim();
-}
+  const result = await conn.query(sql);
+  const ownershipRows = result.toArray().map((row) => ({
+    norm_name: (row.norm_name as string | null) ?? null,
+    fantasy_team: (row.fantasy_team as string | null) ?? null,
+    league_name: (row.league_name as string | null) ?? null,
+  })) satisfies OwnershipRecord[];
 
-interface RankSnapshotRow {
-  latest_rank: number;
-  player_name: string;
-}
-
-interface RankHistorySnapshot<TRow extends RankSnapshotRow> {
-  snapshot_date: string;
-  rows: TRow[];
-}
-
-function toTimestamp(dateValue: string): number {
-  const time = Date.parse(dateValue);
-  return Number.isFinite(time) ? time : 0;
-}
-
-function buildRankTrendByNormName<TRow extends RankSnapshotRow>(
-  latestRows: TRow[],
-  historySnapshots: Array<RankHistorySnapshot<TRow>>,
-  maxPoints = 8
-): Map<string, (number | null)[]> {
-  const targetNorms = new Set(
-    latestRows.map((row) => normalizePlayerName(row.player_name)).filter(Boolean)
-  );
-  const snapshotsByDate = new Map<string, RankHistorySnapshot<TRow>>();
-
-  for (const snapshot of historySnapshots) {
-    if (!snapshot.snapshot_date || !Array.isArray(snapshot.rows)) continue;
-    const existing = snapshotsByDate.get(snapshot.snapshot_date);
-    if (!existing || snapshot.rows.length >= existing.rows.length) {
-      snapshotsByDate.set(snapshot.snapshot_date, snapshot);
-    }
-  }
-
-  // Ensure the current ranking set is always represented even if history fetch is stale.
-  snapshotsByDate.set(new Date().toISOString().slice(0, 10), {
-    snapshot_date: new Date().toISOString(),
-    rows: latestRows,
-  });
-
-  const snapshots = [...snapshotsByDate.values()].sort(
-    (a, b) => toTimestamp(a.snapshot_date) - toTimestamp(b.snapshot_date)
-  );
-
-  const seriesByNormName = new Map<string, (number | null)[]>();
-  for (const normName of targetNorms) {
-    seriesByNormName.set(normName, []);
-  }
-
-  for (const snapshot of snapshots) {
-    const rankByNormName = new Map<string, number>();
-    for (const row of snapshot.rows) {
-      const normName = normalizePlayerName(row.player_name);
-      if (!normName || !targetNorms.has(normName)) continue;
-      if (!rankByNormName.has(normName)) {
-        rankByNormName.set(normName, row.latest_rank);
-      }
-    }
-
-    for (const [normName, series] of seriesByNormName.entries()) {
-      const rank = rankByNormName.get(normName);
-      // Push null for weeks where the pitcher was absent (injured/unranked)
-      series.push(rank ?? null);
-    }
-  }
-
-  for (const [normName, series] of seriesByNormName.entries()) {
-    seriesByNormName.set(normName, series.slice(-maxPoints));
-  }
-
-  return seriesByNormName;
-}
-
-interface ProspectOwnership {
-  fantasy_team: string | null;
-  league_name: string | null;
+  return buildOwnerByNormName(ownershipRows);
 }
 
 interface BuildProspectRowsOptions {
@@ -1347,10 +1224,7 @@ export function buildProspectRows(
     });
   }
 
-  const teamFiltered =
-    selectedFantasyTeams.length > 0
-      ? rows.filter((row) => row.fantasy_team != null && selectedFantasyTeams.includes(row.fantasy_team))
-      : rows;
+  const teamFiltered = applyFantasyTeamFilter(rows, selectedFantasyTeams);
 
   const positionFiltered =
     selectedPositions.length > 0
@@ -1364,10 +1238,11 @@ export function buildProspectRows(
         })
       : teamFiltered;
 
-  const normalizedSearch = playerNameSearch ? normalizePlayerName(playerNameSearch) : '';
-  const searchFiltered = normalizedSearch
-    ? positionFiltered.filter((row) => normalizePlayerName(row.player_name).includes(normalizedSearch))
-    : positionFiltered;
+  const searchFiltered = applyPlayerNameSearchFilter(
+    positionFiltered,
+    playerNameSearch,
+    normalizePlayerName
+  );
 
   const ageFiltered =
     maxAge != null
@@ -1544,26 +1419,7 @@ export async function queryProspects(
   const conn = await db.connect();
 
   try {
-    let sql = 'SELECT league_name, fantasy_team, norm_name FROM yahoo';
-    if (selectedLeague) {
-      sql += ` WHERE league_name = '${escapeSQL(selectedLeague)}'`;
-    }
-
-    const result = await conn.query(sql);
-    const ownershipRows = result.toArray();
-    const ownerByNormName = new Map<
-      string,
-      { fantasy_team: string | null; league_name: string | null }
-    >();
-
-    for (const row of ownershipRows) {
-      const normName = (row.norm_name as string | null) ?? null;
-      if (!normName || ownerByNormName.has(normName)) continue;
-      ownerByNormName.set(normName, {
-        fantasy_team: (row.fantasy_team as string | null) ?? null,
-        league_name: (row.league_name as string | null) ?? null,
-      });
-    }
+    const ownerByNormName = await loadOwnershipByNormName(conn, selectedLeague);
 
     // Load minor league stats for all source row prospects
     const prospectNormNames = Array.from(
@@ -1597,42 +1453,20 @@ export async function queryPitcherTrends(
   const conn = await db.connect();
 
   try {
-    let sql = 'SELECT player_name, league_name, fantasy_team, norm_name FROM yahoo';
-    if (selectedLeague) {
-      sql += ` WHERE league_name = '${escapeSQL(selectedLeague)}'`;
-    }
+    const ownerByNormName = await loadOwnershipByNormName(conn, selectedLeague);
+    const trendByNormName = buildRankTrendByNormName(
+      ranks,
+      historySnapshots,
+      normalizePlayerName,
+      8
+    );
 
-    const result = await conn.query(sql);
-    const ownershipRows = result.toArray();
-    const ownerByNormName = new Map<
-      string,
-      { fantasy_team: string | null; league_name: string | null }
-    >();
-
-    for (const row of ownershipRows) {
-      const normName = (row.norm_name as string | null) ?? null;
-      if (!normName || ownerByNormName.has(normName)) continue;
-      ownerByNormName.set(normName, {
-        fantasy_team: (row.fantasy_team as string | null) ?? null,
-        league_name: (row.league_name as string | null) ?? null,
-      });
-    }
-
-    const trendByNormName = buildRankTrendByNormName(ranks, historySnapshots, 8);
-
-    const joined = ranks.map((rank) => {
-      const normName = normalizePlayerName(rank.player_name);
-      const ownership = ownerByNormName.get(normName);
-      const fantasyTeam = ownership?.fantasy_team ?? null;
-      const trendSeries = trendByNormName.get(normName) ?? [rank.latest_rank];
-      const trendStartRank = trendSeries.find((v) => v != null) ?? null;
-      const trendEndRank = [...trendSeries].reverse().find((v) => v != null) ?? null;
-      const trendNet =
-        trendStartRank != null && trendEndRank != null
-          ? trendStartRank - trendEndRank
-          : null;
-
-      return {
+    const joined = buildRankRowsWithTrend({
+      ranks,
+      ownerByNormName,
+      trendByNormName,
+      normalizePlayerName,
+      buildRow: ({ rank, ownership, trendSeries, trendStartRank, trendEndRank, trendNet }) => ({
         latest_rank: rank.latest_rank,
         player_name: rank.player_name,
         mlb_team: rank.mlb_team,
@@ -1640,24 +1474,21 @@ export async function queryPitcherTrends(
         movement_value: rank.movement_value,
         trend_direction: rank.trend_direction,
         notes: rank.notes,
-        fantasy_team: fantasyTeam,
+        fantasy_team: ownership?.fantasy_team ?? null,
         league_name: ownership?.league_name ?? null,
         trend_8w_series: trendSeries,
         trend_8w_net: trendNet,
         trend_start_rank: trendStartRank,
         trend_end_rank: trendEndRank,
-      } satisfies PitcherTrendRow;
-    });
+      }),
+    }) satisfies PitcherTrendRow[];
 
-    const teamFiltered =
-      selectedFantasyTeams.length > 0
-        ? joined.filter((r) => r.fantasy_team != null && selectedFantasyTeams.includes(r.fantasy_team))
-        : joined;
-
-    const normalizedSearch = playerNameSearch ? normalizePlayerName(playerNameSearch) : '';
-    const filtered = normalizedSearch
-      ? teamFiltered.filter((row) => normalizePlayerName(row.player_name).includes(normalizedSearch))
-      : teamFiltered;
+    const filtered = applyFantasyTeamAndPlayerSearchFilters(
+      joined,
+      selectedFantasyTeams,
+      playerNameSearch,
+      normalizePlayerName
+    );
 
     return filtered.sort((a, b) => a.latest_rank - b.latest_rank);
   } finally {
@@ -1676,42 +1507,20 @@ export async function queryReliefTrends(
   const conn = await db.connect();
 
   try {
-    let sql = 'SELECT player_name, league_name, fantasy_team, norm_name FROM yahoo';
-    if (selectedLeague) {
-      sql += ` WHERE league_name = '${escapeSQL(selectedLeague)}'`;
-    }
+    const ownerByNormName = await loadOwnershipByNormName(conn, selectedLeague);
+    const trendByNormName = buildRankTrendByNormName(
+      ranks,
+      historySnapshots,
+      normalizePlayerName,
+      8
+    );
 
-    const result = await conn.query(sql);
-    const ownershipRows = result.toArray();
-    const ownerByNormName = new Map<
-      string,
-      { fantasy_team: string | null; league_name: string | null }
-    >();
-
-    for (const row of ownershipRows) {
-      const normName = (row.norm_name as string | null) ?? null;
-      if (!normName || ownerByNormName.has(normName)) continue;
-      ownerByNormName.set(normName, {
-        fantasy_team: (row.fantasy_team as string | null) ?? null,
-        league_name: (row.league_name as string | null) ?? null,
-      });
-    }
-
-    const trendByNormName = buildRankTrendByNormName(ranks, historySnapshots, 8);
-
-    const joined = ranks.map((rank) => {
-      const normName = normalizePlayerName(rank.player_name);
-      const ownership = ownerByNormName.get(normName);
-      const fantasyTeam = ownership?.fantasy_team ?? null;
-      const trendSeries = trendByNormName.get(normName) ?? [rank.latest_rank];
-      const trendStartRank = trendSeries.find((v) => v != null) ?? null;
-      const trendEndRank = [...trendSeries].reverse().find((v) => v != null) ?? null;
-      const trendNet =
-        trendStartRank != null && trendEndRank != null
-          ? trendStartRank - trendEndRank
-          : null;
-
-      return {
+    const joined = buildRankRowsWithTrend({
+      ranks,
+      ownerByNormName,
+      trendByNormName,
+      normalizePlayerName,
+      buildRow: ({ rank, ownership, trendSeries, trendStartRank, trendEndRank, trendNet }) => ({
         latest_rank: rank.latest_rank,
         player_name: rank.player_name,
         mlb_team: rank.mlb_team,
@@ -1719,24 +1528,21 @@ export async function queryReliefTrends(
         movement_value: rank.movement_value,
         trend_direction: rank.trend_direction,
         notes: rank.notes,
-        fantasy_team: fantasyTeam,
+        fantasy_team: ownership?.fantasy_team ?? null,
         league_name: ownership?.league_name ?? null,
         trend_8w_series: trendSeries,
         trend_8w_net: trendNet,
         trend_start_rank: trendStartRank,
         trend_end_rank: trendEndRank,
-      } satisfies ReliefTrendRow;
-    });
+      }),
+    }) satisfies ReliefTrendRow[];
 
-    const teamFiltered =
-      selectedFantasyTeams.length > 0
-        ? joined.filter((r) => r.fantasy_team != null && selectedFantasyTeams.includes(r.fantasy_team))
-        : joined;
-
-    const normalizedSearch = playerNameSearch ? normalizePlayerName(playerNameSearch) : '';
-    const filtered = normalizedSearch
-      ? teamFiltered.filter((row) => normalizePlayerName(row.player_name).includes(normalizedSearch))
-      : teamFiltered;
+    const filtered = applyFantasyTeamAndPlayerSearchFilters(
+      joined,
+      selectedFantasyTeams,
+      playerNameSearch,
+      normalizePlayerName
+    );
 
     return filtered.sort((a, b) => a.latest_rank - b.latest_rank);
   } finally {
@@ -1754,26 +1560,7 @@ export async function queryInjuredPitchers(
   const conn = await db.connect();
 
   try {
-    let sql = 'SELECT player_name, league_name, fantasy_team, norm_name FROM yahoo';
-    if (selectedLeague) {
-      sql += ` WHERE league_name = '${escapeSQL(selectedLeague)}'`;
-    }
-
-    const result = await conn.query(sql);
-    const ownershipRows = result.toArray();
-    const ownerByNormName = new Map<
-      string,
-      { fantasy_team: string | null; league_name: string | null }
-    >();
-
-    for (const row of ownershipRows) {
-      const normName = (row.norm_name as string | null) ?? null;
-      if (!normName || ownerByNormName.has(normName)) continue;
-      ownerByNormName.set(normName, {
-        fantasy_team: (row.fantasy_team as string | null) ?? null,
-        league_name: (row.league_name as string | null) ?? null,
-      });
-    }
+    const ownerByNormName = await loadOwnershipByNormName(conn, selectedLeague);
 
     const joined = rows.map((row) => {
       const normName = normalizePlayerName(row.player_name);
@@ -1790,15 +1577,12 @@ export async function queryInjuredPitchers(
       } satisfies InjuredPitcherTrendRow;
     });
 
-    const teamFiltered =
-      selectedFantasyTeams.length > 0
-        ? joined.filter((r) => r.fantasy_team != null && selectedFantasyTeams.includes(r.fantasy_team))
-        : joined;
-
-    const normalizedSearch = playerNameSearch ? normalizePlayerName(playerNameSearch) : '';
-    const filtered = normalizedSearch
-      ? teamFiltered.filter((row) => normalizePlayerName(row.player_name).includes(normalizedSearch))
-      : teamFiltered;
+    const filtered = applyFantasyTeamAndPlayerSearchFilters(
+      joined,
+      selectedFantasyTeams,
+      playerNameSearch,
+      normalizePlayerName
+    );
 
     return filtered.sort((a, b) => {
       if (a.source_list !== b.source_list) {

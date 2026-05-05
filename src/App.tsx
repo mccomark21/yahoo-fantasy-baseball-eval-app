@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { loadData } from '@/lib/data-loader';
+import { useLoadData } from '@/lib/data-source';
 import {
   getFilterOptions,
   getFantasyTeamsForLeague,
@@ -16,8 +16,20 @@ import {
   type PitcherTrendRow,
   type ReliefTrendRow,
   type ProspectRow,
-  type TimeWindow,
 } from '@/lib/queries';
+import {
+  defaultHitterFilters,
+  defaultInjuredFilters,
+  defaultPitcherFilters,
+  defaultProspectFilters,
+  defaultReliefFilters,
+  type ViewFilters,
+  type HitterFilters,
+  type PitcherFilters,
+  type ReliefFilters,
+  type InjuredFilters,
+  type ProspectFilters,
+} from '@/lib/view-filter-state';
 import { FilterBar } from '@/components/FilterBar';
 import { PlayerTable } from '@/components/PlayerTable';
 import { PitcherTable } from '@/components/PitcherTable';
@@ -37,8 +49,14 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Toggle } from '@/components/ui/toggle';
 import { Moon, Sun } from 'lucide-react';
 import { getDefaultRosterTeams } from '@/lib/fantasy-teams';
+import { useAsyncTask } from '@/lib/use-async-task';
+import {
+  runManagedViewQuery,
+  scheduleActiveViewQuery,
+  type ViewMode,
+} from '@/lib/view-orchestration';
 
-type AppStatus = 'loading' | 'ready' | 'error';
+
 type ThemeMode = 'light' | 'dark';
 
 const THEME_STORAGE_KEY = 'theme';
@@ -68,9 +86,8 @@ export default function App() {
 
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
-  const [status, setStatus] = useState<AppStatus>('loading');
-  const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'hitters' | 'pitchers' | 'relievers' | 'injured' | 'prospects'>('hitters');
+  const { status, error } = useLoadData();
+  const [viewMode, setViewMode] = useState<ViewMode>('hitters');
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
     leagues: [],
     fantasyTeams: [],
@@ -82,14 +99,6 @@ export default function App() {
   const [injuredPitchers, setInjuredPitchers] = useState<InjuredPitcherTrendRow[]>([]);
   const [prospects, setProspects] = useState<ProspectRow[]>([]);
   const [queryLoading, setQueryLoading] = useState(false);
-  const [pitcherLoading, setPitcherLoading] = useState(false);
-  const [reliefLoading, setReliefLoading] = useState(false);
-  const [injuredLoading, setInjuredLoading] = useState(false);
-  const [prospectLoading, setProspectLoading] = useState(false);
-  const [pitcherError, setPitcherError] = useState<string | null>(null);
-  const [reliefError, setReliefError] = useState<string | null>(null);
-  const [injuredError, setInjuredError] = useState<string | null>(null);
-  const [prospectError, setProspectError] = useState<string | null>(null);
   const [pitcherMeta, setPitcherMeta] = useState<{
     title: string;
     source_url: string;
@@ -114,23 +123,56 @@ export default function App() {
   const [leagueFantasyTeams, setLeagueFantasyTeams] = useState<string[]>([]);
 
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
-  const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
-  const [selectedPositions, setSelectedPositions] = useState<string[]>([]);
-  const [timeWindow, setTimeWindow] = useState<TimeWindow>('STD');
-  const [selectedPitcherTeams, setSelectedPitcherTeams] = useState<string[]>([]);
-  const [selectedReliefTeams, setSelectedReliefTeams] = useState<string[]>([]);
-  const [selectedInjuredTeams, setSelectedInjuredTeams] = useState<string[]>([]);
-  const [selectedProspectTeams, setSelectedProspectTeams] = useState<string[]>([]);
-  const [selectedProspectMaxAge, setSelectedProspectMaxAge] = useState<number | null>(null);
-  const [selectedProspectRosterFilter, setSelectedProspectRosterFilter] = useState<
-    'all' | 'rostered' | 'available'
-  >('all');
-  const [selectedProspectLevels, setSelectedProspectLevels] = useState<string[]>([]);
+  const [hitterFilters, setHitterFilters] = useState<HitterFilters>(defaultHitterFilters);
+  const [pitcherFilters, setPitcherFilters] = useState<PitcherFilters>(defaultPitcherFilters);
+  const [reliefFilters, setReliefFilters] = useState<ReliefFilters>(defaultReliefFilters);
+  const [injuredFilters, setInjuredFilters] = useState<InjuredFilters>(defaultInjuredFilters);
+  const [prospectFilters, setProspectFilters] = useState<ProspectFilters>(defaultProspectFilters);
+
+  const filtersByMode = useMemo<Record<string, ViewFilters>>(() => ({
+    hitters: hitterFilters,
+    pitchers: pitcherFilters,
+    relievers: reliefFilters,
+    injured: injuredFilters,
+    prospects: prospectFilters,
+  }), [hitterFilters, pitcherFilters, reliefFilters, injuredFilters, prospectFilters]);
+
+  const activeFilters = filtersByMode[viewMode];
+
+  const handleFiltersChange = useCallback((updated: ViewFilters) => {
+    switch (updated.mode) {
+      case 'hitters': setHitterFilters(updated as HitterFilters); break;
+      case 'pitchers': setPitcherFilters(updated as PitcherFilters); break;
+      case 'relievers': setReliefFilters(updated as ReliefFilters); break;
+      case 'injured': setInjuredFilters(updated as InjuredFilters); break;
+      case 'prospects': setProspectFilters(updated as ProspectFilters); break;
+    }
+  }, []);
   const [prospectAgeOptions, setProspectAgeOptions] = useState<number[]>([]);
   const [prospectLevelOptions, setProspectLevelOptions] = useState<string[]>([]);
   const [prospectPositions, setProspectPositions] = useState<string[]>([]);
   const [searchDraft, setSearchDraft] = useState('');
   const [playerSearch, setPlayerSearch] = useState('');
+  const {
+    loading: pitcherLoading,
+    error: pitcherError,
+    run: runPitcherTask,
+  } = useAsyncTask();
+  const {
+    loading: reliefLoading,
+    error: reliefError,
+    run: runReliefTask,
+  } = useAsyncTask();
+  const {
+    loading: injuredLoading,
+    error: injuredError,
+    run: runInjuredTask,
+  } = useAsyncTask();
+  const {
+    loading: prospectLoading,
+    error: prospectError,
+    run: runProspectTask,
+  } = useAsyncTask();
 
   const defaultsSet = useRef(false);
   const reliefScoringMode = useMemo(
@@ -142,13 +184,13 @@ export default function App() {
       const defaults = getDefaultRosterTeams(teams);
       const nextTeamSelection = defaults.length > 0 ? defaults : [];
 
-      setSelectedTeams(nextTeamSelection);
-      setSelectedPitcherTeams(nextTeamSelection);
-      setSelectedReliefTeams(nextTeamSelection);
+      setHitterFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
+      setPitcherFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
+      setReliefFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
       // Injured tab intentionally shows all teams by default — injured pitchers are
       // typically rostered, so applying the Free Agent default would hide all results.
-      setSelectedInjuredTeams([]);
-      setSelectedProspectTeams(nextTeamSelection);
+      setInjuredFilters((f) => ({ ...f, selectedTeams: [] }));
+      setProspectFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
 
       if (defaults.length > 0) {
         console.log(
@@ -168,9 +210,9 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (status !== 'ready') return;
     (async () => {
       try {
-        await loadData();
         const opts = await getFilterOptions();
         setFilterOptions(opts);
 
@@ -183,25 +225,21 @@ export default function App() {
           applyDefaultTeamSelections(firstLeague, teams);
         }
         defaultsSet.current = true;
-
-        setStatus('ready');
       } catch (err) {
-        console.error('Failed to load data:', err);
-        setError(err instanceof Error ? err.message : String(err));
-        setStatus('error');
+        console.error('Failed to initialise filter options:', err);
       }
     })();
-  }, [applyDefaultTeamSelections]);
+  }, [status, applyDefaultTeamSelections]);
 
   const runQuery = useCallback(async () => {
     if (status !== 'ready') return;
     setQueryLoading(true);
     try {
       const rows = await queryPlayers(
-        timeWindow,
+        hitterFilters.timeWindow,
         selectedLeague,
-        selectedTeams,
-        selectedPositions,
+        hitterFilters.selectedTeams,
+        hitterFilters.selectedPositions,
         playerSearch
       );
       const unmatchedCount = rows.filter((r) => r.pa == null && r.bbe == null).length;
@@ -219,185 +257,197 @@ export default function App() {
     } finally {
       setQueryLoading(false);
     }
-  }, [status, timeWindow, selectedLeague, selectedTeams, selectedPositions, playerSearch]);
+  }, [status, hitterFilters, selectedLeague, playerSearch]);
 
   const runPitcherQuery = useCallback(async () => {
-    if (status !== 'ready') return;
+    await runManagedViewQuery({
+      isReady: status === 'ready',
+      runTask: runPitcherTask,
+      task: async () => {
+        const [latest, history] = await Promise.all([
+          fetchLatestPitcherList(),
+          fetchPitcherListHistory(),
+        ]);
+        const joined = await queryPitcherTrends(
+          latest.rows,
+          selectedLeague,
+          pitcherFilters.selectedTeams,
+          playerSearch,
+          history.snapshots
+        );
 
-    setPitcherLoading(true);
-    setPitcherError(null);
-
-    try {
-      const [latest, history] = await Promise.all([
-        fetchLatestPitcherList(),
-        fetchPitcherListHistory(),
-      ]);
-      const joined = await queryPitcherTrends(
-        latest.rows,
-        selectedLeague,
-        selectedPitcherTeams,
-        playerSearch,
-        history.snapshots
-      );
-      setPitchers(joined);
-      setPitcherMeta({
-        title: latest.title,
-        source_url: latest.source_url,
-        published_at: latest.published_at,
-      });
-    } catch (err) {
-      setPitcherError(err instanceof Error ? err.message : String(err));
-      setPitchers([]);
-    } finally {
-      setPitcherLoading(false);
-    }
-  }, [status, selectedLeague, selectedPitcherTeams, playerSearch]);
+        return { latest, joined };
+      },
+      onSuccess: ({ latest, joined }) => {
+        setPitchers(joined);
+        setPitcherMeta({
+          title: latest.title,
+          source_url: latest.source_url,
+          published_at: latest.published_at,
+        });
+      },
+      onError: () => {
+        setPitchers([]);
+      },
+    });
+  }, [status, selectedLeague, pitcherFilters, playerSearch, runPitcherTask]);
 
   const runReliefQuery = useCallback(async () => {
-    if (status !== 'ready') return;
+    await runManagedViewQuery({
+      isReady: status === 'ready',
+      runTask: runReliefTask,
+      task: async () => {
+        const [latest, history] = await Promise.all([
+          fetchLatestReliefList(reliefScoringMode),
+          fetchReliefListHistory(reliefScoringMode),
+        ]);
+        const joined = await queryReliefTrends(
+          latest.rows,
+          selectedLeague,
+          reliefFilters.selectedTeams,
+          playerSearch,
+          history.snapshots
+        );
 
-    setReliefLoading(true);
-    setReliefError(null);
-
-    try {
-      const [latest, history] = await Promise.all([
-        fetchLatestReliefList(reliefScoringMode),
-        fetchReliefListHistory(reliefScoringMode),
-      ]);
-      const joined = await queryReliefTrends(
-        latest.rows,
-        selectedLeague,
-        selectedReliefTeams,
-        playerSearch,
-        history.snapshots
-      );
-      setRelievers(joined);
-      setReliefMeta({
-        title: latest.title,
-        source_url: latest.source_url,
-        published_at: latest.published_at,
-        scoring_mode: latest.scoring_mode,
-      });
-    } catch (err) {
-      setReliefError(err instanceof Error ? err.message : String(err));
-      setRelievers([]);
-    } finally {
-      setReliefLoading(false);
-    }
-  }, [status, selectedLeague, selectedReliefTeams, reliefScoringMode, playerSearch]);
+        return { latest, joined };
+      },
+      onSuccess: ({ latest, joined }) => {
+        setRelievers(joined);
+        setReliefMeta({
+          title: latest.title,
+          source_url: latest.source_url,
+          published_at: latest.published_at,
+          scoring_mode: latest.scoring_mode,
+        });
+      },
+      onError: () => {
+        setRelievers([]);
+      },
+    });
+  }, [status, selectedLeague, reliefFilters, reliefScoringMode, playerSearch, runReliefTask]);
 
   const runInjuredQuery = useCallback(async () => {
-    if (status !== 'ready') return;
+    await runManagedViewQuery({
+      isReady: status === 'ready',
+      runTask: runInjuredTask,
+      task: async () => {
+        const latest = await fetchLatestInjuredPitchers();
+        const joined = await queryInjuredPitchers(
+          latest.rows,
+          selectedLeague,
+          injuredFilters.selectedTeams,
+          playerSearch
+        );
 
-    setInjuredLoading(true);
-    setInjuredError(null);
-
-    try {
-      const latest = await fetchLatestInjuredPitchers();
-      const joined = await queryInjuredPitchers(
-        latest.rows,
-        selectedLeague,
-        selectedInjuredTeams,
-        playerSearch
-      );
-      setInjuredPitchers(joined);
-      setInjuredMeta({
-        title: latest.title,
-        source_urls: latest.source_urls,
-        scraped_at: latest.scraped_at,
-      });
-    } catch (err) {
-      setInjuredError(err instanceof Error ? err.message : String(err));
-      setInjuredPitchers([]);
-    } finally {
-      setInjuredLoading(false);
-    }
-  }, [status, selectedLeague, selectedInjuredTeams, playerSearch]);
+        return { latest, joined };
+      },
+      onSuccess: ({ latest, joined }) => {
+        setInjuredPitchers(joined);
+        setInjuredMeta({
+          title: latest.title,
+          source_urls: latest.source_urls,
+          scraped_at: latest.scraped_at,
+        });
+      },
+      onError: () => {
+        setInjuredPitchers([]);
+      },
+    });
+  }, [status, selectedLeague, injuredFilters, playerSearch, runInjuredTask]);
 
   const runProspectQuery = useCallback(async () => {
-    if (status !== 'ready') return;
+    await runManagedViewQuery({
+      isReady: status === 'ready',
+      runTask: runProspectTask,
+      task: async () => {
+        const latest = await fetchLatestProspects();
+        const joined = await queryProspects(
+          latest.rows,
+          selectedLeague,
+          prospectFilters.selectedTeams,
+          prospectFilters.selectedPositions,
+          playerSearch,
+          125,
+          prospectFilters.maxAge,
+          prospectFilters.rosterFilter,
+          prospectFilters.selectedLevels
+        );
 
-    setProspectLoading(true);
-    setProspectError(null);
+        return { latest, joined };
+      },
+      onSuccess: ({ latest, joined }) => {
+        setProspects(joined);
 
-    try {
-      const latest = await fetchLatestProspects();
-      const joined = await queryProspects(
-        latest.rows,
-        selectedLeague,
-        selectedProspectTeams,
-        selectedPositions,
-        playerSearch,
-        125,
-        selectedProspectMaxAge,
-        selectedProspectRosterFilter,
-        selectedProspectLevels
-      );
-      setProspects(joined);
+        const LEVEL_ORDER = ['MLB', 'AAA', 'AA', 'A+', 'A', 'ROK'];
+        const levelOptions = Array.from(
+          new Set(
+            latest.rows
+              .map((row) => row.level?.trim().toUpperCase())
+              .filter((l): l is string => l != null && l.length > 0)
+          )
+        ).sort((a, b) => {
+          const ai = LEVEL_ORDER.indexOf(a);
+          const bi = LEVEL_ORDER.indexOf(b);
+          if (ai !== -1 && bi !== -1) return ai - bi;
+          if (ai !== -1) return -1;
+          if (bi !== -1) return 1;
+          return a.localeCompare(b);
+        });
+        setProspectLevelOptions(levelOptions);
 
-      const LEVEL_ORDER = ['MLB', 'AAA', 'AA', 'A+', 'A', 'ROK'];
-      const levelOptions = Array.from(
-        new Set(
-          latest.rows
-            .map((row) => row.level?.trim().toUpperCase())
-            .filter((l): l is string => l != null && l.length > 0)
-        )
-      ).sort((a, b) => {
-        const ai = LEVEL_ORDER.indexOf(a);
-        const bi = LEVEL_ORDER.indexOf(b);
-        if (ai !== -1 && bi !== -1) return ai - bi;
-        if (ai !== -1) return -1;
-        if (bi !== -1) return 1;
-        return a.localeCompare(b);
-      });
-      setProspectLevelOptions(levelOptions);
+        const positions = Array.from(
+          new Set(
+            latest.rows
+              .flatMap((row) => row.positions)
+              .map((position) => position.trim().toUpperCase())
+              .filter(Boolean)
+          )
+        ).sort();
+        setProspectPositions(positions);
 
-      const positions = Array.from(
-        new Set(
-          latest.rows
-            .flatMap((row) => row.positions)
-            .map((position) => position.trim().toUpperCase())
-            .filter(Boolean)
-        )
-      ).sort();
-      setProspectPositions(positions);
+        const ageOptions = Array.from(
+          new Set(
+            latest.rows
+              .map((row) => row.age)
+              .filter((age): age is number => age != null && Number.isFinite(age))
+              .map((age) => Math.ceil(age))
+          )
+        ).sort((a, b) => a - b);
+        setProspectAgeOptions(ageOptions);
+        if (prospectFilters.maxAge != null && !ageOptions.includes(prospectFilters.maxAge)) {
+          setProspectFilters((f) => ({ ...f, maxAge: null }));
+        }
 
-      const ageOptions = Array.from(
-        new Set(
-          latest.rows
-            .map((row) => row.age)
-            .filter((age): age is number => age != null && Number.isFinite(age))
-            .map((age) => Math.ceil(age))
-        )
-      ).sort((a, b) => a - b);
-      setProspectAgeOptions(ageOptions);
-      if (selectedProspectMaxAge != null && !ageOptions.includes(selectedProspectMaxAge)) {
-        setSelectedProspectMaxAge(null);
-      }
-
-      setProspectsMeta({
-        title: latest.title,
-        scraped_at: latest.scraped_at,
-        sources: latest.sources,
-      });
-    } catch (err) {
-      setProspectError(err instanceof Error ? err.message : String(err));
-      setProspects([]);
-      setProspectPositions([]);
-      setProspectAgeOptions([]);
-    } finally {
-      setProspectLoading(false);
-    }
+        setProspectsMeta({
+          title: latest.title,
+          scraped_at: latest.scraped_at,
+          sources: latest.sources,
+        });
+      },
+      onError: () => {
+        setProspects([]);
+        setProspectPositions([]);
+        setProspectAgeOptions([]);
+      },
+    });
   }, [
     status,
     selectedLeague,
-    selectedProspectTeams,
-    selectedPositions,
+    prospectFilters,
     playerSearch,
-    selectedProspectMaxAge,
-    selectedProspectRosterFilter,
-    selectedProspectLevels,
+    runProspectTask,
   ]);
+
+  const runByView = useMemo<Record<ViewMode, () => Promise<void>>>(
+    () => ({
+      hitters: runQuery,
+      pitchers: runPitcherQuery,
+      relievers: runReliefQuery,
+      injured: runInjuredQuery,
+      prospects: runProspectQuery,
+    }),
+    [runQuery, runPitcherQuery, runReliefQuery, runInjuredQuery, runProspectQuery]
+  );
 
   const handleLeagueChange = useCallback(async (league: string | null) => {
     setSelectedLeague(league);
@@ -407,37 +457,22 @@ export default function App() {
       applyDefaultTeamSelections(league, teams);
     } else {
       setLeagueFantasyTeams([]);
-      setSelectedTeams([]);
-      setSelectedPitcherTeams([]);
-      setSelectedReliefTeams([]);
-      setSelectedInjuredTeams([]);
-      setSelectedProspectTeams([]);
+      setHitterFilters((f) => ({ ...f, selectedTeams: [] }));
+      setPitcherFilters((f) => ({ ...f, selectedTeams: [] }));
+      setReliefFilters((f) => ({ ...f, selectedTeams: [] }));
+      setInjuredFilters((f) => ({ ...f, selectedTeams: [] }));
+      setProspectFilters((f) => ({ ...f, selectedTeams: [] }));
     }
   }, [applyDefaultTeamSelections]);
 
   useEffect(() => {
     if (!defaultsSet.current) return;
-    const timer = setTimeout(() => {
-      if (viewMode === 'hitters') {
-        void runQuery();
-        return;
-      }
-      if (viewMode === 'pitchers') {
-        void runPitcherQuery();
-        return;
-      }
-      if (viewMode === 'injured') {
-        void runInjuredQuery();
-        return;
-      }
-      if (viewMode === 'prospects') {
-        void runProspectQuery();
-        return;
-      }
-      void runReliefQuery();
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [viewMode, runQuery, runPitcherQuery, runReliefQuery, runInjuredQuery, runProspectQuery]);
+    return scheduleActiveViewQuery({
+      viewMode,
+      runByView,
+      delayMs: 100,
+    });
+  }, [viewMode, runByView]);
 
   if (status === 'loading') {
     return (
@@ -533,31 +568,12 @@ export default function App() {
         </div>
       </header>
       <FilterBar
-        mode={viewMode}
+        filters={activeFilters}
+        onFiltersChange={handleFiltersChange}
         filterOptions={filterOptions}
         leagueFantasyTeams={leagueFantasyTeams}
         selectedLeague={selectedLeague}
         onLeagueChange={handleLeagueChange}
-        selectedTeams={selectedTeams}
-        onTeamsChange={setSelectedTeams}
-        selectedPositions={selectedPositions}
-        onPositionsChange={setSelectedPositions}
-        timeWindow={timeWindow}
-        onTimeWindowChange={setTimeWindow}
-        selectedPitcherTeams={selectedPitcherTeams}
-        onPitcherTeamsChange={setSelectedPitcherTeams}
-        selectedReliefTeams={selectedReliefTeams}
-        onReliefTeamsChange={setSelectedReliefTeams}
-        selectedInjuredTeams={selectedInjuredTeams}
-        onInjuredTeamsChange={setSelectedInjuredTeams}
-        selectedProspectTeams={selectedProspectTeams}
-        onProspectTeamsChange={setSelectedProspectTeams}
-        selectedProspectMaxAge={selectedProspectMaxAge}
-        onProspectMaxAgeChange={setSelectedProspectMaxAge}
-        selectedProspectRosterFilter={selectedProspectRosterFilter}
-        onProspectRosterFilterChange={setSelectedProspectRosterFilter}
-        selectedProspectLevels={selectedProspectLevels}
-        onProspectLevelsChange={setSelectedProspectLevels}
         prospectAgeOptions={prospectAgeOptions}
         prospectLevelOptions={prospectLevelOptions}
         prospectPositions={prospectPositions}
@@ -569,7 +585,7 @@ export default function App() {
         <PlayerTable
           data={players}
           isLoading={queryLoading}
-          showMetricSparklines={timeWindow === 'STD'}
+          showMetricSparklines={hitterFilters.timeWindow === 'STD'}
         />
       ) : viewMode === 'pitchers' ? (
         <>
