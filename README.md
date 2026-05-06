@@ -10,7 +10,7 @@ A browser-based tool for evaluating **hitters, starting pitchers, relievers, and
 
 ### Hitters
 
-- League, fantasy team, and position filters
+- League, fantasy team, and position filters (league is always selected)
 - Time windows: Season-to-Date, Last 30 Days, Last 14 Days, Last 7 Days
 - Volume threshold filter: minimum PA and BBE set to 50% of the filtered-group medians
 - Z-score normalization for xwOBA, BB:K, Pull Air%, and SB

@@ -1,20 +1,14 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLoadData } from '@/lib/data-source';
 import {
   getFilterOptions,
   getFantasyTeamsForLeague,
-  queryInjuredPitchers,
   queryPlayers,
-  queryPitcherTrends,
-  queryReliefTrends,
   queryProspects,
   filterByVolume,
   computeZScores,
   type FilterOptions,
-  type InjuredPitcherTrendRow,
   type PlayerRow,
-  type PitcherTrendRow,
-  type ReliefTrendRow,
   type ProspectRow,
 } from '@/lib/queries';
 import {
@@ -36,14 +30,7 @@ import { PitcherTable } from '@/components/PitcherTable';
 import { ReliefPitcherTable } from '@/components/ReliefPitcherTable';
 import { InjuredPitcherTable } from '@/components/InjuredPitcherTable';
 import { ProspectTable } from '@/components/ProspectTable';
-import {
-  fetchLatestInjuredPitchers,
-  fetchLatestPitcherList,
-  fetchPitcherListHistory,
-  fetchLatestReliefList,
-  fetchReliefListHistory,
-  type ReliefScoringMode,
-} from '@/lib/pitcherlist-client';
+import { type ReliefScoringMode } from '@/lib/pitcherlist-client';
 import { fetchLatestProspects, type ProspectSourceStatus } from '@/lib/prospects-client';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Toggle } from '@/components/ui/toggle';
@@ -53,6 +40,7 @@ import { useAsyncTask } from '@/lib/use-async-task';
 import {
   runManagedViewQuery,
   scheduleActiveViewQuery,
+  useRankingViews,
   type ViewMode,
 } from '@/lib/view-orchestration';
 
@@ -94,27 +82,8 @@ export default function App() {
     positions: [],
   });
   const [players, setPlayers] = useState<PlayerRow[]>([]);
-  const [pitchers, setPitchers] = useState<PitcherTrendRow[]>([]);
-  const [relievers, setRelievers] = useState<ReliefTrendRow[]>([]);
-  const [injuredPitchers, setInjuredPitchers] = useState<InjuredPitcherTrendRow[]>([]);
   const [prospects, setProspects] = useState<ProspectRow[]>([]);
   const [queryLoading, setQueryLoading] = useState(false);
-  const [pitcherMeta, setPitcherMeta] = useState<{
-    title: string;
-    source_url: string;
-    published_at: string | null;
-  } | null>(null);
-  const [reliefMeta, setReliefMeta] = useState<{
-    title: string;
-    source_url: string;
-    published_at: string | null;
-    scoring_mode: ReliefScoringMode;
-  } | null>(null);
-  const [injuredMeta, setInjuredMeta] = useState<{
-    title: string;
-    source_urls: { sp: string; rp: string };
-    scraped_at: string;
-  } | null>(null);
   const [prospectsMeta, setProspectsMeta] = useState<{
     title: string;
     scraped_at: string;
@@ -122,7 +91,7 @@ export default function App() {
   } | null>(null);
   const [leagueFantasyTeams, setLeagueFantasyTeams] = useState<string[]>([]);
 
-  const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
+  const [selectedLeague, setSelectedLeague] = useState<string>('');
   const [hitterFilters, setHitterFilters] = useState<HitterFilters>(defaultHitterFilters);
   const [pitcherFilters, setPitcherFilters] = useState<PitcherFilters>(defaultPitcherFilters);
   const [reliefFilters, setReliefFilters] = useState<ReliefFilters>(defaultReliefFilters);
@@ -154,27 +123,12 @@ export default function App() {
   const [searchDraft, setSearchDraft] = useState('');
   const [playerSearch, setPlayerSearch] = useState('');
   const {
-    loading: pitcherLoading,
-    error: pitcherError,
-    run: runPitcherTask,
-  } = useAsyncTask();
-  const {
-    loading: reliefLoading,
-    error: reliefError,
-    run: runReliefTask,
-  } = useAsyncTask();
-  const {
-    loading: injuredLoading,
-    error: injuredError,
-    run: runInjuredTask,
-  } = useAsyncTask();
-  const {
     loading: prospectLoading,
     error: prospectError,
     run: runProspectTask,
   } = useAsyncTask();
 
-  const defaultsSet = useRef(false);
+  const [defaultsApplied, setDefaultsApplied] = useState(false);
   const reliefScoringMode = useMemo(
     () => getReliefModeForLeague(selectedLeague),
     [selectedLeague]
@@ -224,7 +178,7 @@ export default function App() {
           setLeagueFantasyTeams(teams);
           applyDefaultTeamSelections(firstLeague, teams);
         }
-        defaultsSet.current = true;
+        setDefaultsApplied(true);
       } catch (err) {
         console.error('Failed to initialise filter options:', err);
       }
@@ -259,101 +213,50 @@ export default function App() {
     }
   }, [status, hitterFilters, selectedLeague, playerSearch]);
 
-  const runPitcherQuery = useCallback(async () => {
-    await runManagedViewQuery({
-      isReady: status === 'ready',
-      runTask: runPitcherTask,
-      task: async () => {
-        const [latest, history] = await Promise.all([
-          fetchLatestPitcherList(),
-          fetchPitcherListHistory(),
-        ]);
-        const joined = await queryPitcherTrends(
-          latest.rows,
-          selectedLeague,
-          pitcherFilters.selectedTeams,
-          playerSearch,
-          history.snapshots
-        );
+  // ---------------------------------------------------------------------------
+  // Ranking view orchestration — Pitcher View, Reliever View, Injured View.
+  // Inputs are memoized so the hook only re-runs queries when relevant state changes.
+  // ---------------------------------------------------------------------------
 
-        return { latest, joined };
-      },
-      onSuccess: ({ latest, joined }) => {
-        setPitchers(joined);
-        setPitcherMeta({
-          title: latest.title,
-          source_url: latest.source_url,
-          published_at: latest.published_at,
-        });
-      },
-      onError: () => {
-        setPitchers([]);
-      },
-    });
-  }, [status, selectedLeague, pitcherFilters, playerSearch, runPitcherTask]);
+  const pitcherInput = useMemo(
+    () => ({
+      selectedLeague,
+      selectedTeams: pitcherFilters.selectedTeams,
+      playerSearch,
+    }),
+    [selectedLeague, pitcherFilters.selectedTeams, playerSearch],
+  );
 
-  const runReliefQuery = useCallback(async () => {
-    await runManagedViewQuery({
-      isReady: status === 'ready',
-      runTask: runReliefTask,
-      task: async () => {
-        const [latest, history] = await Promise.all([
-          fetchLatestReliefList(reliefScoringMode),
-          fetchReliefListHistory(reliefScoringMode),
-        ]);
-        const joined = await queryReliefTrends(
-          latest.rows,
-          selectedLeague,
-          reliefFilters.selectedTeams,
-          playerSearch,
-          history.snapshots
-        );
+  const reliefInput = useMemo(
+    () => ({
+      selectedLeague,
+      selectedTeams: reliefFilters.selectedTeams,
+      playerSearch,
+      scoringMode: reliefScoringMode,
+    }),
+    [selectedLeague, reliefFilters.selectedTeams, playerSearch, reliefScoringMode],
+  );
 
-        return { latest, joined };
-      },
-      onSuccess: ({ latest, joined }) => {
-        setRelievers(joined);
-        setReliefMeta({
-          title: latest.title,
-          source_url: latest.source_url,
-          published_at: latest.published_at,
-          scoring_mode: latest.scoring_mode,
-        });
-      },
-      onError: () => {
-        setRelievers([]);
-      },
-    });
-  }, [status, selectedLeague, reliefFilters, reliefScoringMode, playerSearch, runReliefTask]);
+  const injuredInput = useMemo(
+    () => ({
+      selectedLeague,
+      selectedTeams: injuredFilters.selectedTeams,
+      playerSearch,
+    }),
+    [selectedLeague, injuredFilters.selectedTeams, playerSearch],
+  );
 
-  const runInjuredQuery = useCallback(async () => {
-    await runManagedViewQuery({
-      isReady: status === 'ready',
-      runTask: runInjuredTask,
-      task: async () => {
-        const latest = await fetchLatestInjuredPitchers();
-        const joined = await queryInjuredPitchers(
-          latest.rows,
-          selectedLeague,
-          injuredFilters.selectedTeams,
-          playerSearch
-        );
-
-        return { latest, joined };
-      },
-      onSuccess: ({ latest, joined }) => {
-        setInjuredPitchers(joined);
-        setInjuredMeta({
-          title: latest.title,
-          source_urls: latest.source_urls,
-          scraped_at: latest.scraped_at,
-        });
-      },
-      onError: () => {
-        setInjuredPitchers([]);
-      },
-    });
-  }, [status, selectedLeague, injuredFilters, playerSearch, runInjuredTask]);
+  const {
+    pitcher: pitcherView,
+    relief: reliefView,
+    injured: injuredView,
+  } = useRankingViews({
+    isReady: status === 'ready' && defaultsApplied,
+    viewMode,
+    pitcher: pitcherInput,
+    relief: reliefInput,
+    injured: injuredInput,
+  });
 
   const runProspectQuery = useCallback(async () => {
     await runManagedViewQuery({
@@ -438,41 +341,29 @@ export default function App() {
     runProspectTask,
   ]);
 
-  const runByView = useMemo<Record<ViewMode, () => Promise<void>>>(
+  const runByView = useMemo<Partial<Record<ViewMode, () => Promise<void>>>>(
     () => ({
       hitters: runQuery,
-      pitchers: runPitcherQuery,
-      relievers: runReliefQuery,
-      injured: runInjuredQuery,
       prospects: runProspectQuery,
     }),
-    [runQuery, runPitcherQuery, runReliefQuery, runInjuredQuery, runProspectQuery]
+    [runQuery, runProspectQuery],
   );
 
-  const handleLeagueChange = useCallback(async (league: string | null) => {
+  const handleLeagueChange = useCallback(async (league: string) => {
     setSelectedLeague(league);
-    if (league) {
-      const teams = await getFantasyTeamsForLeague(league);
-      setLeagueFantasyTeams(teams);
-      applyDefaultTeamSelections(league, teams);
-    } else {
-      setLeagueFantasyTeams([]);
-      setHitterFilters((f) => ({ ...f, selectedTeams: [] }));
-      setPitcherFilters((f) => ({ ...f, selectedTeams: [] }));
-      setReliefFilters((f) => ({ ...f, selectedTeams: [] }));
-      setInjuredFilters((f) => ({ ...f, selectedTeams: [] }));
-      setProspectFilters((f) => ({ ...f, selectedTeams: [] }));
-    }
+    const teams = await getFantasyTeamsForLeague(league);
+    setLeagueFantasyTeams(teams);
+    applyDefaultTeamSelections(league, teams);
   }, [applyDefaultTeamSelections]);
 
   useEffect(() => {
-    if (!defaultsSet.current) return;
+    if (!defaultsApplied) return;
     return scheduleActiveViewQuery({
       viewMode,
       runByView,
       delayMs: 100,
     });
-  }, [viewMode, runByView]);
+  }, [viewMode, runByView, defaultsApplied]);
 
   if (status === 'loading') {
     return (
@@ -590,15 +481,15 @@ export default function App() {
       ) : viewMode === 'pitchers' ? (
         <>
           <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
-            {pitcherError ? (
-              <span className="text-destructive">Pitcher List fetch failed: {pitcherError}</span>
-            ) : pitcherMeta ? (
+            {pitcherView.error ? (
+              <span className="text-destructive">Pitcher List fetch failed: {pitcherView.error}</span>
+            ) : pitcherView.meta ? (
               <span>
-                {pitcherMeta.title}
-                {pitcherMeta.published_at ? ` · Published ${new Date(pitcherMeta.published_at).toLocaleDateString()}` : ''}
+                {pitcherView.meta.title}
+                {pitcherView.meta.published_at ? ` · Published ${new Date(pitcherView.meta.published_at).toLocaleDateString()}` : ''}
                 {' · '}
                 <a
-                  href={pitcherMeta.source_url}
+                  href={pitcherView.meta.source_url}
                   target="_blank"
                   rel="noreferrer"
                   className="underline"
@@ -610,21 +501,21 @@ export default function App() {
               <span>Loading latest Pitcher List Top 100...</span>
             )}
           </div>
-          <PitcherTable data={pitchers} isLoading={pitcherLoading} />
+          <PitcherTable data={pitcherView.rows} isLoading={pitcherView.isLoading} />
         </>
       ) : viewMode === 'relievers' ? (
         <>
           <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
-            {reliefError ? (
-              <span className="text-destructive">Reliever rankings fetch failed: {reliefError}</span>
-            ) : reliefMeta ? (
+            {reliefView.error ? (
+              <span className="text-destructive">Reliever rankings fetch failed: {reliefView.error}</span>
+            ) : reliefView.meta ? (
               <span>
-                {reliefMeta.title}
-                {` · ${reliefMeta.scoring_mode === 'saves' ? 'Saves-only' : 'SV+HLD'}`}
-                {reliefMeta.published_at ? ` · Published ${new Date(reliefMeta.published_at).toLocaleDateString()}` : ''}
+                {reliefView.meta.title}
+                {` · ${reliefView.meta.scoring_mode === 'saves' ? 'Saves-only' : 'SV+HLD'}`}
+                {reliefView.meta.published_at ? ` · Published ${new Date(reliefView.meta.published_at).toLocaleDateString()}` : ''}
                 {' · '}
                 <a
-                  href={reliefMeta.source_url}
+                  href={reliefView.meta.source_url}
                   target="_blank"
                   rel="noreferrer"
                   className="underline"
@@ -636,20 +527,20 @@ export default function App() {
               <span>Loading latest reliever rankings...</span>
             )}
           </div>
-          <ReliefPitcherTable data={relievers} isLoading={reliefLoading} />
+          <ReliefPitcherTable data={reliefView.rows} isLoading={reliefView.isLoading} />
         </>
       ) : viewMode === 'injured' ? (
         <>
           <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
-            {injuredError ? (
-              <span className="text-destructive">Injured pitcher rankings fetch failed: {injuredError}</span>
-            ) : injuredMeta ? (
+            {injuredView.error ? (
+              <span className="text-destructive">Injured pitcher rankings fetch failed: {injuredView.error}</span>
+            ) : injuredView.meta ? (
               <span>
-                {injuredMeta.title}
-                {` · Refreshed ${new Date(injuredMeta.scraped_at).toLocaleString()}`}
+                {injuredView.meta.title}
+                {` · Refreshed ${new Date(injuredView.meta.scraped_at).toLocaleString()}`}
                 {' · '}
                 <a
-                  href={injuredMeta.source_urls.sp}
+                  href={injuredView.meta.source_urls.sp}
                   target="_blank"
                   rel="noreferrer"
                   className="underline"
@@ -658,7 +549,7 @@ export default function App() {
                 </a>
                 {' · '}
                 <a
-                  href={injuredMeta.source_urls.rp}
+                  href={injuredView.meta.source_urls.rp}
                   target="_blank"
                   rel="noreferrer"
                   className="underline"
@@ -670,7 +561,7 @@ export default function App() {
               <span>Loading injured pitcher rankings...</span>
             )}
           </div>
-          <InjuredPitcherTable data={injuredPitchers} isLoading={injuredLoading} />
+          <InjuredPitcherTable data={injuredView.rows} isLoading={injuredView.isLoading} />
         </>
       ) : (
         <>

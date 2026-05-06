@@ -27,8 +27,8 @@ interface FilterBarProps {
   onFiltersChange: (filters: ViewFilters) => void;
   filterOptions: FilterOptions;
   leagueFantasyTeams: string[];
-  selectedLeague: string | null;
-  onLeagueChange: (league: string | null) => void;
+  selectedLeague: string;
+  onLeagueChange: (league: string) => void;
   /** Dynamic age options derived from the loaded prospect data. */
   prospectAgeOptions: number[];
   /** Dynamic level options derived from the loaded prospect data. */
@@ -119,11 +119,11 @@ export function FilterBar({
             <div className="flex flex-col gap-1 w-full md:w-auto">
               <label className="text-xs font-medium text-muted-foreground">League</label>
               <Select
-                value={selectedLeague ?? undefined}
-                onValueChange={(v) => onLeagueChange(v || null)}
+                value={selectedLeague}
+                onValueChange={(v) => onLeagueChange(v)}
               >
                 <SelectTrigger className="w-full md:w-[200px]">
-                  <SelectValue placeholder="All Leagues" />
+                  <SelectValue placeholder="League" />
                 </SelectTrigger>
                 <SelectContent>
                   {filterOptions.leagues.map((league) => (
