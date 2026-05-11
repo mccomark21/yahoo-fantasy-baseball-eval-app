@@ -276,7 +276,7 @@ describe('buildProspectRows', () => {
     });
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].average_rank).toBeGreaterThan(10);
+    expect(rows[0].average_rank).toBeGreaterThanOrEqual(10);
     expect(rows[0].average_rank).toBeLessThan(100);
     expect(rows[0].fantrax_rank).toBe(100);
     expect(rows[0].fangraphs_rank).toBe(10);

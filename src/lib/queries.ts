@@ -1134,9 +1134,15 @@ export function buildProspectRows(
       ? effectiveRanks.filter((r) => r !== Math.max(...effectiveRanks))
       : effectiveRanks;
 
+    // Calculate average excluding the worst rank
+    const worstRank = Math.max(...effectiveRanks);
+    const weightedRanksExcludingWorst = effectiveRanks.length > 1
+      ? weightedRanks.filter(({ rank }) => (rank ?? missingRankDefault) !== worstRank)
+      : weightedRanks;
+
     const avg =
-      weightedRanks.reduce((sum, entry) => sum + (entry.rank ?? missingRankDefault) * entry.weight, 0) /
-      weightedRanks.reduce((sum, entry) => sum + entry.weight, 0);
+      weightedRanksExcludingWorst.reduce((sum, entry) => sum + (entry.rank ?? missingRankDefault) * entry.weight, 0) /
+      weightedRanksExcludingWorst.reduce((sum, entry) => sum + entry.weight, 0);
     const highest = Math.min(...ranksExcludingWorst);
     const lowest = Math.max(...ranksExcludingWorst);
     const rankStdDev = stddev(ranksExcludingWorst);

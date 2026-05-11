@@ -50,7 +50,7 @@ A browser-based tool for evaluating **hitters, starting pitchers, relievers, and
 ### Prospects
 
 - Aggregates prospect rankings from MLB Pipeline, FanGraphs, Prospects Live, FantraxHQ, Pitcher List, and TJStats into a single consensus list
-- Displays a freshness-weighted consensus rank, highest/lowest rank, and rank standard deviation across sources
+- Displays a freshness-weighted consensus rank that excludes each player's single worst source rank, plus highest/lowest rank and rank standard deviation across sources
 - Uses each source's last updated date when available, with an exponential decay curve so newer rankings carry more influence without fully discarding older lists
 - Bias-adjusted best-rank score surfaces prospects with strong high-end rankings
 - Org column is normalized to MLB team abbreviations (for example, `LAD`, `NYY`, `BOS`)
