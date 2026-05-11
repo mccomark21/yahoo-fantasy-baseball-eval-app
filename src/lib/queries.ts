@@ -9,7 +9,7 @@ import type {
   ReliefListRankRow,
   TrendDirection,
 } from './pitcherlist-client';
-import type { ProspectSourceRow } from './prospects-client';
+import type { ProspectSourceRow, ProspectSourceStatus } from './prospects-client';
 import {
   applyFantasyTeamAndPlayerSearchFilters,
   applyFantasyTeamFilter,
@@ -136,6 +136,9 @@ export interface ProspectRow {
   mlb_rank: number | null;
   fangraphs_rank: number | null;
   prospects_live_rank: number | null;
+  fantrax_rank: number | null;
+  pitcherlist_rank: number | null;
+  tjstats_rank: number | null;
   average_rank: number;
   highest_rank: number;
   lowest_rank: number;
@@ -1025,10 +1028,31 @@ interface BuildProspectRowsOptions {
   selectedPositions: string[];
   selectedLevels?: string[];
   playerNameSearch?: string;
+  sourceStatuses?: ProspectSourceStatus[];
   missingRankDefault?: number;
   maxAge?: number | null;
   rosterFilter?: 'all' | 'rostered' | 'available';
   minorLeagueStatsByNormName?: Map<string, Record<ProspectStatsWindow, ProspectMinorLeagueStats>>;
+  consensusReferenceDate?: Date;
+}
+
+const PROSPECT_SOURCE_HALF_LIFE_DAYS = 30;
+const PROSPECT_SOURCE_WEIGHT_FLOOR = 0.25;
+
+function parseDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getProspectSourceWeight(status: ProspectSourceStatus, referenceDate: Date): number {
+  const effectiveDate = parseDate(status.published_at) ?? parseDate(status.scraped_at);
+  if (!effectiveDate) return 1;
+
+  const ageMs = Math.max(0, referenceDate.getTime() - effectiveDate.getTime());
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  const decay = Math.pow(0.5, ageDays / PROSPECT_SOURCE_HALF_LIFE_DAYS);
+  return Math.max(PROSPECT_SOURCE_WEIGHT_FLOOR, decay);
 }
 
 export function buildProspectRows(
@@ -1041,11 +1065,24 @@ export function buildProspectRows(
     selectedPositions,
     selectedLevels = [],
     playerNameSearch,
+    sourceStatuses = [],
     missingRankDefault = 125,
     maxAge = null,
     rosterFilter = 'all',
     minorLeagueStatsByNormName = new Map(),
+    consensusReferenceDate = new Date(),
   } = options;
+
+  const activeSourceStatuses = sourceStatuses.filter(
+    (status) => status.status === 'ok' && status.row_count > 0
+  );
+  const sourceWeightByName = new Map(
+    activeSourceStatuses.map((status) => [status.source, getProspectSourceWeight(status, consensusReferenceDate)])
+  );
+  const blendSourceNames =
+    activeSourceStatuses.length > 0
+      ? activeSourceStatuses.map((status) => status.source)
+      : Array.from(new Set(sourceRows.map((row) => row.source)));
 
   const grouped = new Map<string, ProspectSourceRow[]>();
   for (const sourceRow of sourceRows) {
@@ -1071,17 +1108,38 @@ export function buildProspectRows(
     const mlbRank = rankBySource.get('mlb') ?? null;
     const fangraphsRank = rankBySource.get('fangraphs') ?? null;
     const prospectsLiveRank = rankBySource.get('prospects_live') ?? null;
+    const fantraxRank = rankBySource.get('fantrax') ?? null;
+    const pitcherlistRank = rankBySource.get('pitcherlist') ?? null;
+    const tjstatsRank = rankBySource.get('tjstats') ?? null;
 
-    const effectiveRanks = [
-      mlbRank ?? missingRankDefault,
-      fangraphsRank ?? missingRankDefault,
-      prospectsLiveRank ?? missingRankDefault,
-    ];
+    const sourceRankByName = new Map<string, number | null>([
+      ['mlb', mlbRank],
+      ['fangraphs', fangraphsRank],
+      ['prospects_live', prospectsLiveRank],
+      ['fantrax', fantraxRank],
+      ['pitcherlist', pitcherlistRank],
+      ['tjstats', tjstatsRank],
+    ]);
 
-    const avg = effectiveRanks.reduce((sum, rank) => sum + rank, 0) / effectiveRanks.length;
-    const highest = Math.min(...effectiveRanks);
-    const lowest = Math.max(...effectiveRanks);
-    const rankStdDev = stddev(effectiveRanks);
+    const weightedRanks = blendSourceNames.map((sourceName) => ({
+      sourceName,
+      rank: sourceRankByName.get(sourceName) ?? null,
+      weight: sourceWeightByName.get(sourceName) ?? 1,
+    }));
+
+    const effectiveRanks = weightedRanks.map(({ rank }) => rank ?? missingRankDefault);
+
+    // Exclude the lowest ranking (highest number / worst rank) from consensus calculations
+    const ranksExcludingWorst = effectiveRanks.length > 1 
+      ? effectiveRanks.filter((r) => r !== Math.max(...effectiveRanks))
+      : effectiveRanks;
+
+    const avg =
+      weightedRanks.reduce((sum, entry) => sum + (entry.rank ?? missingRankDefault) * entry.weight, 0) /
+      weightedRanks.reduce((sum, entry) => sum + entry.weight, 0);
+    const highest = Math.min(...ranksExcludingWorst);
+    const lowest = Math.max(...ranksExcludingWorst);
+    const rankStdDev = stddev(ranksExcludingWorst);
 
     const bestRankBiasScore =
       0.6 * highest +
@@ -1132,7 +1190,8 @@ export function buildProspectRows(
     };
 
     const ownership = ownerByNormName.get(normName);
-    const fantasyTeam = ownership?.fantasy_team ?? null;
+    // Prospects absent from Yahoo ownership rows should behave like unrostered free agents.
+    const fantasyTeam = ownership?.fantasy_team ?? 'Free Agent';
     const rostered =
       fantasyTeam != null &&
       !fantasyTeam.toLowerCase().includes('free agent') &&
@@ -1202,6 +1261,9 @@ export function buildProspectRows(
       mlb_rank: mlbRank,
       fangraphs_rank: fangraphsRank,
       prospects_live_rank: prospectsLiveRank,
+      fantrax_rank: fantraxRank,
+      pitcherlist_rank: pitcherlistRank,
+      tjstats_rank: tjstatsRank,
       average_rank: toRounded(avg, 2),
       highest_rank: highest,
       lowest_rank: lowest,
@@ -1261,7 +1323,10 @@ export function buildProspectRows(
       ? rosterFiltered.filter((row) => row.level != null && selectedLevels.includes(row.level))
       : rosterFiltered;
 
-  return levelFiltered
+  // Hard filter: exclude all MLB-level players from prospect list
+  const mlbExcluded = levelFiltered.filter((row) => row.level !== 'MLB');
+
+  return mlbExcluded
     .sort((a, b) => {
       if (a.best_rank_bias_score !== b.best_rank_bias_score) {
         return a.best_rank_bias_score - b.best_rank_bias_score;
@@ -1274,7 +1339,38 @@ export function buildProspectRows(
       }
       return a.player_name.localeCompare(b.player_name);
     })
-    .slice(0, 50);
+    .slice(0, 100);
+}
+
+export function resolveStatsNormNameWithFallback(
+  playerName: string,
+  normNameSet: Set<string>
+): string | null {
+  const direct = normalizePlayerName(playerName);
+  if (!direct) return null;
+  if (normNameSet.has(direct)) return direct;
+
+  // Some upstream rows contain replacement-character mojibake (e.g. "Pe�a").
+  // Try guarded substitutions and only accept a candidate that matches the
+  // already-known prospect norm-name set for this query.
+  if (!playerName.includes('�')) {
+    return direct;
+  }
+
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+  for (const letter of alphabet) {
+    const candidateNorm = normalizePlayerName(playerName.replaceAll('�', letter));
+    if (candidateNorm && normNameSet.has(candidateNorm)) {
+      return candidateNorm;
+    }
+  }
+
+  const removedNorm = normalizePlayerName(playerName.replaceAll('�', ''));
+  if (removedNorm && normNameSet.has(removedNorm)) {
+    return removedNorm;
+  }
+
+  return direct;
 }
 
 async function loadMinorLeagueStats(
@@ -1332,7 +1428,7 @@ async function loadMinorLeagueStats(
       const window = normalizeProspectWindow((row.stats_window as string | null) ?? null);
 
       if (!playerName || !window) continue;
-      const normName = normalizePlayerName(playerName);
+      const normName = resolveStatsNormNameWithFallback(playerName, normNameSet);
       if (!normName || !normNameSet.has(normName)) continue;
 
       const defaultStats: ProspectMinorLeagueStats = {
@@ -1410,6 +1506,7 @@ export async function queryProspects(
   selectedFantasyTeams: string[],
   selectedPositions: string[],
   playerNameSearch?: string,
+  sourceStatuses: ProspectSourceStatus[] = [],
   missingRankDefault = 125,
   maxAge: number | null = null,
   rosterFilter: 'all' | 'rostered' | 'available' = 'all',
@@ -1432,10 +1529,12 @@ export async function queryProspects(
       selectedPositions,
       selectedLevels,
       playerNameSearch,
+      sourceStatuses,
       missingRankDefault,
       maxAge,
       rosterFilter,
       minorLeagueStatsByNormName,
+      consensusReferenceDate: new Date(),
     });
   } finally {
     await conn.close();

@@ -45,12 +45,118 @@ interface ProspectTrendSummary {
 
 const PITCHER_POSITION_CODES = new Set(['P', 'SP', 'RP']);
 const HITTER_POSITION_CODES = new Set(['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'DH', 'UT']);
+const ORG_ABBREVIATIONS = new Map<string, string>([
+  ['ARIZONA DIAMONDBACKS', 'ARI'],
+  ['ARI', 'ARI'],
+  ['ATLANTA BRAVES', 'ATL'],
+  ['ATL', 'ATL'],
+  ['BALTIMORE ORIOLES', 'BAL'],
+  ['BAL', 'BAL'],
+  ['BOSTON RED SOX', 'BOS'],
+  ['BOS', 'BOS'],
+  ['CHICAGO CUBS', 'CHC'],
+  ['CHC', 'CHC'],
+  ['CHICAGO WHITE SOX', 'CWS'],
+  ['CWS', 'CWS'],
+  ['CINCINNATI REDS', 'CIN'],
+  ['CIN', 'CIN'],
+  ['CLEVELAND GUARDIANS', 'CLE'],
+  ['CLE', 'CLE'],
+  ['COLORADO ROCKIES', 'COL'],
+  ['COL', 'COL'],
+  ['DETROIT TIGERS', 'DET'],
+  ['DET', 'DET'],
+  ['HOUSTON ASTROS', 'HOU'],
+  ['HOU', 'HOU'],
+  ['KANSAS CITY ROYALS', 'KC'],
+  ['KANSAS CITY', 'KC'],
+  ['KC', 'KC'],
+  ['LOS ANGELES ANGELS', 'LAA'],
+  ['LA ANGELS', 'LAA'],
+  ['LAA', 'LAA'],
+  ['LOS ANGELES DODGERS', 'LAD'],
+  ['LA DODGERS', 'LAD'],
+  ['LAD', 'LAD'],
+  ['MIAMI MARLINS', 'MIA'],
+  ['MIA', 'MIA'],
+  ['MILWAUKEE BREWERS', 'MIL'],
+  ['MIL', 'MIL'],
+  ['MINNESOTA TWINS', 'MIN'],
+  ['MIN', 'MIN'],
+  ['NEW YORK METS', 'NYM'],
+  ['NY METS', 'NYM'],
+  ['NYM', 'NYM'],
+  ['NEW YORK YANKEES', 'NYY'],
+  ['NY YANKEES', 'NYY'],
+  ['NYY', 'NYY'],
+  ['ATHLETICS', 'ATH'],
+  ['OAKLAND ATHLETICS', 'ATH'],
+  ['A\'S', 'ATH'],
+  ['AS', 'ATH'],
+  ['ATH', 'ATH'],
+  ['PHILADELPHIA PHILLIES', 'PHI'],
+  ['PHI', 'PHI'],
+  ['PITTSBURGH PIRATES', 'PIT'],
+  ['PIT', 'PIT'],
+  ['SAN DIEGO PADRES', 'SD'],
+  ['SD', 'SD'],
+  ['SAN FRANCISCO GIANTS', 'SF'],
+  ['SF', 'SF'],
+  ['SEATTLE MARINERS', 'SEA'],
+  ['SEA', 'SEA'],
+  ['ST. LOUIS CARDINALS', 'STL'],
+  ['ST LOUIS CARDINALS', 'STL'],
+  ['STL', 'STL'],
+  ['TAMPA BAY RAYS', 'TB'],
+  ['TB', 'TB'],
+  ['TEXAS RANGERS', 'TEX'],
+  ['TEX', 'TEX'],
+  ['TORONTO BLUE JAYS', 'TOR'],
+  ['TOR', 'TOR'],
+  ['WASHINGTON NATIONALS', 'WSH'],
+  ['WSH', 'WSH'],
+]);
 
 function parsePositionCodes(positions: string): string[] {
   return positions
     .split(/[,/]/)
     .map((position) => position.trim().toUpperCase())
     .filter(Boolean);
+}
+
+function formatOrgAbbreviation(organization: string | null): string {
+  if (!organization) return '—';
+
+  const normalized = organization.trim().toUpperCase();
+  if (!normalized) return '—';
+
+  const mapped = ORG_ABBREVIATIONS.get(normalized);
+  if (mapped) return mapped;
+
+  if (/^[A-Z]{2,3}$/.test(normalized)) return normalized;
+
+  const lettersOnly = normalized.replace(/[^A-Z]/g, '');
+  if (lettersOnly.length >= 3) return lettersOnly.slice(0, 3);
+
+  return normalized.slice(0, 3);
+}
+
+function formatDisplayPosition(row: ProspectRow): string {
+  const codes = parsePositionCodes(row.positions);
+  if (codes.length === 0) return '—';
+
+  const role = getProspectRole(row);
+  if (role === 'pitcher') {
+    const hasLhp = codes.includes('LHP');
+    if (hasLhp) return 'LHP';
+    const hasRhp = codes.includes('RHP');
+    if (hasRhp) return 'RHP';
+    if (codes.includes('SP')) return 'SP';
+    if (codes.includes('P')) return 'P';
+    return 'P';
+  }
+
+  return codes[0];
 }
 
 function getProspectRole(row: ProspectRow): ProspectRole {
@@ -189,7 +295,7 @@ function formatNum(value: number | null, digits = 2): string {
 
 export function ProspectTable({ data, isLoading }: ProspectTableProps) {
   const isMobile = useIsMobile();
-  const [sortKey, setSortKey] = useState<ProspectSortKey>('best_rank_bias_score');
+  const [sortKey, setSortKey] = useState<ProspectSortKey>('average_rank');
   const [sortDesc, setSortDesc] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [showRankingColumns, setShowRankingColumns] = useState(false);
@@ -293,7 +399,7 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                       )}
                     </button>
                     <div className="text-xs text-muted-foreground mt-0.5">
-                      {row.organization ?? '—'} · {row.positions || '—'} · Age {formatAge(row.age)} · ETA {row.eta ?? '—'} · {row.level ?? '—'}
+                      {formatOrgAbbreviation(row.organization)} · {formatDisplayPosition(row)} · Age {formatAge(row.age)} · ETA {row.eta ?? '—'} · {row.level ?? '—'}
                     </div>
                   </div>
                   <div className="text-right">
@@ -400,6 +506,9 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                   <TableHead>MLB</TableHead>
                   <TableHead>FG</TableHead>
                   <TableHead>PLive</TableHead>
+                  <TableHead>Fantrax</TableHead>
+                  <TableHead>PList</TableHead>
+                  <TableHead>TJ</TableHead>
                 </>
               )}
               <TableHead>AB / HR / AVG / OPS</TableHead>
@@ -420,8 +529,8 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                     <TableCell className="font-medium">
                       {row.player_name}
                     </TableCell>
-                    <TableCell>{row.organization ?? '—'}</TableCell>
-                    <TableCell>{row.positions || '—'}</TableCell>
+                    <TableCell>{formatOrgAbbreviation(row.organization)}</TableCell>
+                    <TableCell>{formatDisplayPosition(row)}</TableCell>
                     <TableCell className="font-mono tabular-nums">{formatAge(row.age)}</TableCell>
                     <TableCell className="font-mono tabular-nums">{row.eta ?? '—'}</TableCell>
                     <TableCell className="font-mono tabular-nums">{row.level ?? '—'}</TableCell>
@@ -435,6 +544,9 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                         <TableCell className="font-mono tabular-nums">{row.mlb_rank ?? '—'}</TableCell>
                         <TableCell className="font-mono tabular-nums">{row.fangraphs_rank ?? '—'}</TableCell>
                         <TableCell className="font-mono tabular-nums">{row.prospects_live_rank ?? '—'}</TableCell>
+                        <TableCell className="font-mono tabular-nums">{row.fantrax_rank ?? '—'}</TableCell>
+                        <TableCell className="font-mono tabular-nums">{row.pitcherlist_rank ?? '—'}</TableCell>
+                        <TableCell className="font-mono tabular-nums">{row.tjstats_rank ?? '—'}</TableCell>
                       </>
                     )}
                     <TableCell className="font-mono tabular-nums text-sm">
@@ -460,7 +572,7 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
               })
             ) : (
               <TableRow>
-                <TableCell colSpan={showRankingColumns ? 17 : 11} className="h-24 text-center text-muted-foreground">No results.</TableCell>
+                <TableCell colSpan={showRankingColumns ? 20 : 11} className="h-24 text-center text-muted-foreground">No results.</TableCell>
               </TableRow>
             )}
           </TableBody>

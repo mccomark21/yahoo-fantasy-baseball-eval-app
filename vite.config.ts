@@ -13,6 +13,10 @@ const RELIEF_LIST_CATEGORY_URL_SVHLD =
 const MLB_PROSPECTS_URL = 'https://www.mlb.com/milb/prospects/top100/'
 const FANGRAPHS_PROSPECTS_URL = 'https://www.fangraphs.com/prospects/the-board'
 const PROSPECTS_LIVE_URL = 'https://www.prospectslive.com/2026-top-100-prospects/'
+const FANTRAX_PROSPECTS_URL = 'https://fantraxhq.com/top-400-fantasy-baseball-prospects-dynasty/'
+const PITCHERLIST_PROSPECTS_URL = 'https://pitcherlist.com/category/dynasty/prospect-rankings/'
+const TJSTATS_PROSPECTS_URL = 'https://tjstats.ca/top-100-prospects/'
+const TJSTATS_PROSPECTS_API_URL = 'https://tjstats.ca/wp-json/tjstats/v1/rankings'
 const PRODUCTION_API_BASE_URL =
   process.env.PRODUCTION_API_BASE_URL ??
   'https://mccomark21.github.io/yahoo-fantasy-baseball-eval-app/api'
@@ -20,7 +24,7 @@ const MAX_HISTORY_SNAPSHOTS = 12
 const HISTORY_BACKFILL_TARGET = 8
 
 type ReliefScoringMode = 'svhld' | 'saves'
-type ProspectSourceName = 'mlb' | 'fangraphs' | 'prospects_live'
+type ProspectSourceName = 'mlb' | 'fangraphs' | 'prospects_live' | 'fantrax' | 'pitcherlist' | 'tjstats'
 type SnapshotRefreshTarget = 'all' | 'pitcher' | 'relief'
 type PitcherSourceList = 'SP' | 'RP'
 
@@ -214,6 +218,68 @@ function normalizeScoutingText(value: unknown, maxLen = 1200): string | null {
   if (!normalized) return null
   if (normalized.length <= maxLen) return normalized
   return `${normalized.slice(0, maxLen).trimEnd()}...`
+}
+
+function extractJsonLdDates(html: string): { datePublished: string | null; dateModified: string | null } {
+  const $ = load(html)
+  const scripts = $('script[type="application/ld+json"]')
+    .map((_i, script) => normalizeWhitespace($(script).text()))
+    .get()
+
+  for (const script of scripts) {
+    if (!script) continue
+
+    try {
+      const parsed = JSON.parse(script) as unknown
+      const nodes = Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === 'object' && Array.isArray((parsed as { '@graph'?: unknown[] })['@graph'])
+          ? ((parsed as { '@graph': unknown[] })['@graph'] as unknown[])
+          : [parsed]
+
+      for (const node of nodes) {
+        if (!node || typeof node !== 'object') continue
+        const record = node as { datePublished?: unknown; dateModified?: unknown }
+        const datePublished = typeof record.datePublished === 'string' ? record.datePublished : null
+        const dateModified = typeof record.dateModified === 'string' ? record.dateModified : null
+        if (datePublished || dateModified) {
+          return { datePublished, dateModified }
+        }
+      }
+    } catch {
+      continue
+    }
+  }
+
+  return { datePublished: null, dateModified: null }
+}
+
+function extractGenericPublishedAt(html: string): string | null {
+  const $ = load(html)
+  const metaCandidates = [
+    $('meta[property="article:modified_time"]').attr('content'),
+    $('meta[property="article:published_time"]').attr('content'),
+    $('meta[property="og:updated_time"]').attr('content'),
+    $('time[datetime]').first().attr('datetime'),
+  ]
+
+  for (const candidate of metaCandidates) {
+    if (candidate) return candidate
+  }
+
+  const jsonLd = extractJsonLdDates(html)
+  return jsonLd.dateModified ?? jsonLd.datePublished ?? null
+}
+
+function parseEasternUpdatedTimestamp(value: string): string | null {
+  const normalized = normalizeWhitespace(value).replace(/^Updated:\s*/i, '')
+  const match = normalized.match(
+    /^(?:[A-Za-z]+,\s*)?([A-Za-z]+\s+\d{1,2},\s+\d{4}\s+\d{1,2}:\d{2}\s+[AP]M)\s+ET$/i
+  )
+  if (!match) return null
+
+  const parsed = new Date(`${match[1]} GMT-0400`)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
 }
 
 function extractScoutingGradesSummary(report: string | null): string | null {
@@ -1176,6 +1242,212 @@ function parseProspectsLivePage(html: string): ProspectSourceRow[] {
   return rows
 }
 
+function parseSimpleProspectTableRows(
+  html: string,
+  source: ProspectSourceName,
+  headerMatcher: RegExp,
+  rowMapper: (cells: string[]) => ProspectSourceRow | null
+): ProspectSourceRow[] {
+  const $ = load(html)
+  const tables = $('table')
+  const allRows: ProspectSourceRow[] = []
+
+  for (const table of tables.toArray()) {
+    const headerText = normalizeWhitespace(
+      $(table)
+        .find('tr')
+        .first()
+        .find('th, td')
+        .map((_i, cell) => normalizeWhitespace($(cell).text()))
+        .get()
+        .join(' ')
+    )
+    if (!headerMatcher.test(headerText)) {
+      continue
+    }
+
+    const rows: ProspectSourceRow[] = []
+    $(table)
+      .find('tr')
+      .slice(1)
+      .each((_i, tr) => {
+        const cells = $(tr)
+          .find('td')
+          .map((_j, td) => normalizeWhitespace($(td).text()))
+          .get()
+        if (cells.length === 0) return
+
+        const row = rowMapper(cells)
+        if (row && row.source === source) {
+          rows.push(row)
+        }
+      })
+
+    allRows.push(...rows)
+  }
+
+  if (allRows.length === 0) {
+    return []
+  }
+
+  const deduped = new Map<string, ProspectSourceRow>()
+  for (const row of allRows) {
+    const key = `${row.rank}:${cleanPlayerName(row.player_name).toLowerCase()}`
+    if (!deduped.has(key)) {
+      deduped.set(key, row)
+    }
+  }
+
+  return [...deduped.values()].sort((a, b) => a.rank - b.rank)
+}
+
+function parseFantraxProspectsPage(html: string): ProspectSourceRow[] {
+  return parseSimpleProspectTableRows(
+    html,
+    'fantrax',
+    /rank\s+change\s+player\s+position\s+team\s+age\s+level\s+eta/i,
+    (cells) => {
+      const rank = Number.parseInt(cells[0] ?? '', 10)
+      if (!Number.isFinite(rank) || rank < 1 || rank > 500) return null
+
+      const playerName = repairMojibake(normalizeWhitespace(cells[2] ?? ''))
+      if (!playerName) return null
+
+      return {
+        source: 'fantrax',
+        rank,
+        player_name: playerName,
+        org: repairMojibake(normalizeWhitespace(cells[4] ?? '')).toUpperCase() || null,
+        positions: splitPositions(cells[3] ?? ''),
+        age: Number.isFinite(Number.parseFloat(cells[5] ?? '')) ? Math.round(Number.parseFloat(cells[5] ?? '') * 10) / 10 : null,
+        eta: normalizeEtaValue(cells[7]),
+        level: normalizeLevelValue(cells[6]),
+        height: null,
+        weight: null,
+        bats: null,
+        throws: null,
+        fv: null,
+        ofp: null,
+        stats_summary: null,
+        scouting_report: null,
+        notes: null,
+      }
+    }
+  )
+}
+
+function parsePitcherListProspectsPage(html: string): ProspectSourceRow[] {
+  return parseSimpleProspectTableRows(
+    html,
+    'pitcherlist',
+    /rank\s+player\s+team\s+position\s+age\s+previous ranking\s+\+\/-/i,
+    (cells) => {
+      const rank = Number.parseInt(cells[0] ?? '', 10)
+      if (!Number.isFinite(rank) || rank < 1 || rank > 200) return null
+
+      const playerName = repairMojibake(normalizeWhitespace(cells[1] ?? ''))
+      if (!playerName) return null
+
+      return {
+        source: 'pitcherlist',
+        rank,
+        player_name: playerName,
+        org: repairMojibake(normalizeWhitespace(cells[2] ?? '')).toUpperCase() || null,
+        positions: splitPositions(cells[3] ?? ''),
+        age: Number.isFinite(Number.parseFloat(cells[4] ?? '')) ? Math.round(Number.parseFloat(cells[4] ?? '') * 10) / 10 : null,
+        eta: null,
+        level: null,
+        height: null,
+        weight: null,
+        bats: null,
+        throws: null,
+        fv: null,
+        ofp: null,
+        stats_summary: null,
+        scouting_report: null,
+        notes: normalizeWhitespace(cells.slice(5).join(' ')) || null,
+      }
+    }
+  )
+}
+
+function parseTjStatsProspectsPage(html: string): ProspectSourceRow[] {
+  return parseSimpleProspectTableRows(
+    html,
+    'tjstats',
+    /rank\s+name\s+team\s+position\s+fv\s+age\s+height\s+weight\s+b\/t/i,
+    (cells) => {
+      const rank = Number.parseInt(cells[0] ?? '', 10)
+      if (!Number.isFinite(rank) || rank < 1 || rank > 100) return null
+
+      const playerName = repairMojibake(normalizeWhitespace(cells[2] ?? ''))
+      if (!playerName) return null
+
+      return {
+        source: 'tjstats',
+        rank,
+        player_name: playerName,
+        org: repairMojibake(normalizeWhitespace(cells[3] ?? '')).toUpperCase() || null,
+        positions: splitPositions(cells[4] ?? ''),
+        age: Number.isFinite(Number.parseFloat(cells[6] ?? '')) ? Math.round(Number.parseFloat(cells[6] ?? '') * 10) / 10 : null,
+        eta: null,
+        level: null,
+        height: normalizeHeightValue(cells[7] ?? ''),
+        weight: normalizeWeightValue(cells[8] ?? ''),
+        bats: normalizeBatThrowValue(cells[9]?.split('/')?.[0] ?? null),
+        throws: normalizeBatThrowValue(cells[9]?.split('/')?.[1] ?? null),
+        fv: normalizeWhitespace(cells[5] ?? '') || null,
+        ofp: null,
+        stats_summary: null,
+        scouting_report: null,
+        notes: null,
+      }
+    }
+  )
+}
+
+function parseTjStatsRankingsApi(payload: unknown): ProspectSourceRow[] {
+  if (!Array.isArray(payload)) {
+    return []
+  }
+
+  const rows: ProspectSourceRow[] = []
+  for (const item of payload) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+
+    const rank = Number.parseInt(String(row.rank_value ?? ''), 10)
+    if (!Number.isFinite(rank) || rank < 1 || rank > 1000) continue
+
+    const playerName = repairMojibake(normalizeWhitespace(String(row.name ?? '')))
+    if (!playerName) continue
+
+    rows.push({
+      source: 'tjstats',
+      rank,
+      player_name: playerName,
+      org: repairMojibake(normalizeWhitespace(String(row.abbreviation ?? row.team ?? row.franchise ?? ''))).toUpperCase() || null,
+      positions: splitPositions(String(row.position ?? '')),
+      age: Number.isFinite(Number.parseFloat(String(row.age ?? '')))
+        ? Math.round(Number.parseFloat(String(row.age ?? '')) * 10) / 10
+        : null,
+      eta: null,
+      level: null,
+      height: normalizeHeightValue(String(row.height ?? '')),
+      weight: normalizeWeightValue(String(row.weight ?? '')),
+      bats: normalizeBatThrowValue(row.bat_side ?? null),
+      throws: normalizeBatThrowValue(row.throw_side ?? null),
+      fv: null,
+      ofp: null,
+      stats_summary: null,
+      scouting_report: normalizeScoutingText(row.report ?? null, 2200),
+      notes: null,
+    })
+  }
+
+  return rows
+}
+
 function parseFangraphsBoardPage(html: string): ProspectSourceRow[] {
   const $ = load(html)
   const nextData = $('#__NEXT_DATA__').text()
@@ -1272,25 +1544,72 @@ function parseFangraphsBoardPage(html: string): ProspectSourceRow[] {
   return [...deduped.values()].sort((a, b) => a.rank - b.rank)
 }
 
+function parseFanGraphsUpdatedAt(html: string): string | null {
+  const $ = load(html)
+  const bodyText = normalizeWhitespace($('body').text())
+  const match = bodyText.match(
+    /Updated:\s*(?:[A-Za-z]+,\s*)?[A-Za-z]+\s+\d{1,2},\s+\d{4}\s+\d{1,2}:\d{2}\s+[AP]M\s+ET/i
+  )
+  if (!match) return extractGenericPublishedAt(html)
+
+  return parseEasternUpdatedTimestamp(match[0]) ?? extractGenericPublishedAt(html)
+}
+
 async function collectProspectSource(
   source: ProspectSourceName,
   sourceUrl: string
 ): Promise<{ status: ProspectSourceStatus; rows: ProspectSourceRow[] }> {
   const scrapedAt = new Date().toISOString()
   let rows: ProspectSourceRow[] = []
+  let html = ''
+  let effectiveHtml = ''
 
   try {
-    const html =
+    html =
       source === 'fangraphs'
         ? await fetchHtmlWithRetry(sourceUrl)
         : await fetchHtml(sourceUrl)
 
+    effectiveHtml = html
+    if (source === 'pitcherlist') {
+      const $ = load(html)
+      const candidateHref =
+        $('a')
+          .filter((_i, link) => /top\s*150\s*dynasty\s*prospects/i.test(normalizeWhitespace($(link).text())))
+          .first()
+          .attr('href') ?? null
+
+      if (candidateHref) {
+        const articleUrl = new URL(candidateHref, sourceUrl).toString()
+        try {
+          effectiveHtml = await fetchHtml(articleUrl)
+        } catch {
+          effectiveHtml = html
+        }
+      }
+    }
+
     if (source === 'mlb') {
-      rows = parseMlbProspectsPage(html)
+      rows = parseMlbProspectsPage(effectiveHtml)
     } else if (source === 'prospects_live') {
-      rows = parseProspectsLivePage(html)
+      rows = parseProspectsLivePage(effectiveHtml)
+    } else if (source === 'fantrax') {
+      rows = parseFantraxProspectsPage(effectiveHtml)
+    } else if (source === 'pitcherlist') {
+      rows = parsePitcherListProspectsPage(effectiveHtml)
+    } else if (source === 'tjstats') {
+      const tjstatsResponse = await fetch(TJSTATS_PROSPECTS_API_URL, {
+        headers: {
+          'user-agent': 'Mozilla/5.0 (compatible; YahooFantasyEval/1.0)',
+          accept: 'application/json',
+        },
+      })
+      if (!tjstatsResponse.ok) {
+        throw new Error(`TJStats rankings API returned ${tjstatsResponse.status}`)
+      }
+      rows = parseTjStatsRankingsApi(await tjstatsResponse.json())
     } else {
-      rows = parseFangraphsBoardPage(html)
+      rows = parseFangraphsBoardPage(effectiveHtml)
     }
 
     if (rows.length === 0) {
@@ -1304,10 +1623,25 @@ async function collectProspectSource(
           source === 'mlb'
             ? 'MLB Pipeline Top 100 Prospects'
             : source === 'fangraphs'
-              ? 'Fangraphs The Board'
-              : 'Prospects Live Top 100',
+              ? 'FanGraphs The Board'
+              : source === 'prospects_live'
+                ? 'Prospects Live Top 100'
+                : source === 'fantrax'
+                  ? 'FantraxHQ Top 400 Fantasy Baseball Prospects'
+                  : source === 'pitcherlist'
+                    ? 'Pitcher List Top 150 Dynasty Prospects'
+                    : 'TJStats Top 100 MLB Prospects',
         source_url: sourceUrl,
-        published_at: null,
+        published_at:
+          source === 'fangraphs'
+            ? parseFanGraphsUpdatedAt(effectiveHtml)
+            : source === 'fantrax'
+              ? extractJsonLdDates(effectiveHtml).dateModified ?? extractJsonLdDates(effectiveHtml).datePublished
+              : source === 'pitcherlist' || source === 'prospects_live'
+                ? extractGenericPublishedAt(effectiveHtml)
+                : source === 'tjstats'
+                  ? extractJsonLdDates(effectiveHtml).dateModified ?? extractGenericPublishedAt(effectiveHtml)
+                  : extractGenericPublishedAt(effectiveHtml),
         scraped_at: scrapedAt,
         status: 'ok',
         row_count: rows.length,
@@ -1325,10 +1659,25 @@ async function collectProspectSource(
           source === 'mlb'
             ? 'MLB Pipeline Top 100 Prospects'
             : source === 'fangraphs'
-              ? 'Fangraphs The Board'
-              : 'Prospects Live Top 100',
+              ? 'FanGraphs The Board'
+              : source === 'prospects_live'
+                ? 'Prospects Live Top 100'
+                : source === 'fantrax'
+                  ? 'FantraxHQ Top 400 Fantasy Baseball Prospects'
+                  : source === 'pitcherlist'
+                    ? 'Pitcher List Top 150 Dynasty Prospects'
+                    : 'TJStats Top 100 MLB Prospects',
         source_url: sourceUrl,
-        published_at: null,
+        published_at:
+          source === 'fangraphs'
+            ? parseFanGraphsUpdatedAt(effectiveHtml)
+            : source === 'fantrax'
+              ? extractJsonLdDates(effectiveHtml).dateModified ?? extractJsonLdDates(effectiveHtml).datePublished
+              : source === 'pitcherlist' || source === 'prospects_live'
+                ? extractGenericPublishedAt(effectiveHtml)
+                : source === 'tjstats'
+                  ? extractJsonLdDates(effectiveHtml).dateModified ?? extractGenericPublishedAt(effectiveHtml)
+                  : extractGenericPublishedAt(effectiveHtml),
         scraped_at: scrapedAt,
         status: 'error',
         row_count: 0,
@@ -1340,14 +1689,24 @@ async function collectProspectSource(
 }
 
 async function fetchLatestProspects(): Promise<ProspectsLatestResponse> {
-  const [mlb, fangraphs, prospectsLive] = await Promise.all([
+  const [mlb, fangraphs, prospectsLive, fantrax, pitcherlist, tjstats] = await Promise.all([
     collectProspectSource('mlb', MLB_PROSPECTS_URL),
     collectProspectSource('fangraphs', FANGRAPHS_PROSPECTS_URL),
     collectProspectSource('prospects_live', PROSPECTS_LIVE_URL),
+    collectProspectSource('fantrax', FANTRAX_PROSPECTS_URL),
+    collectProspectSource('pitcherlist', PITCHERLIST_PROSPECTS_URL),
+    collectProspectSource('tjstats', TJSTATS_PROSPECTS_URL),
   ])
 
-  const allRows = [...mlb.rows, ...fangraphs.rows, ...prospectsLive.rows]
-  const sources = [mlb.status, fangraphs.status, prospectsLive.status]
+  const allRows = [
+    ...mlb.rows,
+    ...fangraphs.rows,
+    ...prospectsLive.rows,
+    ...fantrax.rows,
+    ...pitcherlist.rows,
+    ...tjstats.rows,
+  ]
+  const sources = [mlb.status, fangraphs.status, prospectsLive.status, fantrax.status, pitcherlist.status, tjstats.status]
 
   if (allRows.length === 0) {
     const errors = sources

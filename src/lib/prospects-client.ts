@@ -1,4 +1,10 @@
-export type ProspectSourceName = 'mlb' | 'fangraphs' | 'prospects_live';
+export type ProspectSourceName =
+  | 'mlb'
+  | 'fangraphs'
+  | 'prospects_live'
+  | 'fantrax'
+  | 'pitcherlist'
+  | 'tjstats';
 
 export interface ProspectSourceRow {
   source: ProspectSourceName;

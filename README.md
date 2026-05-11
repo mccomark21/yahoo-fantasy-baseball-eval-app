@@ -49,10 +49,14 @@ A browser-based tool for evaluating **hitters, starting pitchers, relievers, and
 
 ### Prospects
 
-- Aggregates prospect rankings from MLB Pipeline, FanGraphs, and Prospects Live into a single consensus list
-- Displays average rank, highest/lowest rank, and rank standard deviation across sources
+- Aggregates prospect rankings from MLB Pipeline, FanGraphs, Prospects Live, FantraxHQ, Pitcher List, and TJStats into a single consensus list
+- Displays a freshness-weighted consensus rank, highest/lowest rank, and rank standard deviation across sources
+- Uses each source's last updated date when available, with an exponential decay curve so newer rankings carry more influence without fully discarding older lists
 - Bias-adjusted best-rank score surfaces prospects with strong high-end rankings
+- Org column is normalized to MLB team abbreviations (for example, `LAD`, `NYY`, `BOS`)
+- POS column is reduced to a single display value; pitchers prefer handedness (`LHP`/`RHP`) and otherwise fall back to `SP` or `P`
 - Shows minor league stats (AB, AVG, HR, IP, ERA, WHIP, K/9) in selectable windows: Season, L30, L14, L7
+- Uses guarded fallback name repair when prospect stat rows contain replacement-character mojibake (for example, `Pe�a`) so rows still join to the correct player
 - **Trend emoji indicators** show performance across three windows simultaneously:
   - Display order: `[L7] [14] [L30]` — one emoji per window
   - `🔥` Hot — strong recent performance (see thresholds below)
@@ -63,6 +67,7 @@ A browser-based tool for evaluating **hitters, starting pitchers, relievers, and
 	- **Pitcher thresholds (composite score):** Score = `(2.50/ERA)×40 + (0.90/WHIP)×35 + (K9/9.0)×25` — 🔥 score ≥ 85 | 🧊 score ≤ 50 (L7) / ≤ 55 (L14/L30) — min IP: 3 (L7), 6 (L14), 12/12 (L30 fire/ice)
 - Hover any trend cell for a per-window tooltip showing AB/OPS or IP/score
 - Roster status badge indicates whether the prospect is currently rostered in your league
+- Prospects without a Yahoo ownership match are labeled as Free Agent so team filters do not hide them
 - Optional ranking columns toggle (MLB rank, FG rank, Prospects Live rank)
 
 ## Data Pipeline
@@ -73,7 +78,8 @@ The app joins Yahoo and PyBaseball data in-browser and enriches pitcher views wi
 |--------|--------|------------|
 | **Yahoo Fantasy Rosters** — league name, fantasy team, player name, MLB team, eligible positions | CSV | [mccomark21/yahoo-fantasy-data-hub](https://github.com/mccomark21/yahoo-fantasy-data-hub) |
 | **PyBaseball Batter Game Logs** — per-game StatCast metrics (xwOBA, batted-ball data, plate discipline, etc.) | Parquet | [mccomark21/pybaseball-data-hub](https://github.com/mccomark21/pybaseball-data-hub) |
-| **Pitcher List Rankings** — latest starting pitcher, reliever, and injured-pitcher ranking tables | HTML -> JSON | [pitcherlist.com](https://pitcherlist.com/) |
+| **Pitcher List Rankings** — latest starting pitcher, reliever, injured-pitcher, and prospect ranking tables | HTML -> JSON | [pitcherlist.com](https://pitcherlist.com/) |
+| **Prospect Rankings** — MLB Pipeline, FanGraphs, Prospects Live, FantraxHQ, Pitcher List, and TJStats rankings with source freshness metadata | HTML/JSON -> JSON | [mlb.com](https://www.mlb.com/), [fangraphs.com](https://www.fangraphs.com/), [prospectslive.com](https://www.prospectslive.com/), [fantraxhq.com](https://fantraxhq.com/), [pitcherlist.com](https://pitcherlist.com/), [tjstats.ca](https://tjstats.ca/) |
 
 The Yahoo and PyBaseball source files are fetched at startup and cached in **IndexedDB** with a 4-hour TTL to avoid redundant downloads on page reload.
 

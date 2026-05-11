@@ -270,6 +270,7 @@ export default function App() {
           prospectFilters.selectedTeams,
           prospectFilters.selectedPositions,
           playerSearch,
+          latest.sources,
           125,
           prospectFilters.maxAge,
           prospectFilters.rosterFilter,
@@ -576,7 +577,7 @@ export default function App() {
                 {prospectsMeta.sources
                   .map((source) =>
                     source.status === 'ok'
-                      ? `${source.source} (${source.row_count})`
+                      ? `${source.source} (${source.row_count}, ${new Date(source.published_at ?? source.scraped_at).toLocaleDateString()})`
                       : `${source.source} (error)`
                   )
                   .join(', ')}
