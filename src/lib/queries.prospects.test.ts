@@ -281,6 +281,41 @@ describe('buildProspectRows', () => {
     expect(rows[0].fantrax_rank).toBe(100);
     expect(rows[0].fangraphs_rank).toBe(10);
   });
+
+  it('excludes sources older than 60 days from consensus rank calculation', () => {
+    const sourceRows: ProspectSourceRow[] = [
+      makeProspectRow('mlb', 50, 'Stale Source Test'),
+      makeProspectRow('fangraphs', 10, 'Stale Source Test'),
+      makeProspectRow('prospects_live', 60, 'Stale Source Test'),
+      makeProspectRow('fantrax', 65, 'Stale Source Test'),
+    ];
+
+    const staleSourceStatuses: ProspectSourceStatus[] = [
+      makeSourceStatus('mlb', '2026-03-10T00:00:00Z'), // ~70 days old
+      makeSourceStatus('fangraphs', '2026-05-15T00:00:00Z'), // ~4 days old
+      makeSourceStatus('prospects_live', '2026-03-15T00:00:00Z'), // ~65 days old
+      makeSourceStatus('fantrax', '2026-05-19T00:00:00Z'), // current day
+    ];
+
+    const rows = buildProspectRows(sourceRows, new Map(), {
+      selectedFantasyTeams: [],
+      selectedPositions: [],
+      playerNameSearch: '',
+      maxAge: null,
+      sourceStatuses: staleSourceStatuses,
+      consensusReferenceDate: new Date('2026-05-19T12:00:00Z'),
+    });
+
+    expect(rows).toHaveLength(1);
+    // Only fangraphs (10) and fantrax (65) should participate
+    // Excluding worst (65), we average only fangraphs: 10
+    expect(rows[0].average_rank).toBe(10);
+    expect(rows[0].fangraphs_rank).toBe(10);
+    expect(rows[0].fantrax_rank).toBe(65);
+    // MLB and prospects_live are > 60 days old, so not included in consensus
+    expect(rows[0].mlb_rank).toBe(50);
+    expect(rows[0].prospects_live_rank).toBe(60);
+  });
 });
 
 describe('resolveStatsNormNameWithFallback', () => {

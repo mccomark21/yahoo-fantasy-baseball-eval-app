@@ -55,7 +55,7 @@ An ordered sequence of recent ranking positions used to show movement direction.
 _Avoid_: sparkline payload, rank trace
 
 **Prospect Consensus Rank**:
-A blended prospect standing from MLB Pipeline, FanGraphs, and Prospects Live sources.
+A blended prospect standing from sources updated within the last 60 days. Only sources with recent data contribute to the average rank; older sources are excluded entirely.
 _Avoid_: aggregate score, merged index
 
 ## Relationships

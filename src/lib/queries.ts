@@ -1036,8 +1036,7 @@ interface BuildProspectRowsOptions {
   consensusReferenceDate?: Date;
 }
 
-const PROSPECT_SOURCE_HALF_LIFE_DAYS = 30;
-const PROSPECT_SOURCE_WEIGHT_FLOOR = 0.25;
+const PROSPECT_SOURCE_MAX_AGE_DAYS = 60;
 
 function parseDate(value: string | null | undefined): Date | null {
   if (!value) return null;
@@ -1045,14 +1044,13 @@ function parseDate(value: string | null | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function getProspectSourceWeight(status: ProspectSourceStatus, referenceDate: Date): number {
+function isProspectSourceFresh(status: ProspectSourceStatus, referenceDate: Date): boolean {
   const effectiveDate = parseDate(status.published_at) ?? parseDate(status.scraped_at);
-  if (!effectiveDate) return 1;
+  if (!effectiveDate) return true; // Treat undated sources as fresh
 
   const ageMs = Math.max(0, referenceDate.getTime() - effectiveDate.getTime());
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
-  const decay = Math.pow(0.5, ageDays / PROSPECT_SOURCE_HALF_LIFE_DAYS);
-  return Math.max(PROSPECT_SOURCE_WEIGHT_FLOOR, decay);
+  return ageDays <= PROSPECT_SOURCE_MAX_AGE_DAYS;
 }
 
 export function buildProspectRows(
@@ -1074,10 +1072,10 @@ export function buildProspectRows(
   } = options;
 
   const activeSourceStatuses = sourceStatuses.filter(
-    (status) => status.status === 'ok' && status.row_count > 0
+    (status) => status.status === 'ok' && status.row_count > 0 && isProspectSourceFresh(status, consensusReferenceDate)
   );
   const sourceWeightByName = new Map(
-    activeSourceStatuses.map((status) => [status.source, getProspectSourceWeight(status, consensusReferenceDate)])
+    activeSourceStatuses.map((status) => [status.source, 1])
   );
   const blendSourceNames =
     activeSourceStatuses.length > 0
