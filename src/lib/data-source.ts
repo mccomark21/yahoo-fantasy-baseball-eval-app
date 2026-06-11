@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { loadData } from './data-loader';
 
 /**
@@ -14,19 +14,24 @@ export type DataSourceStatus = 'unloaded' | 'loading' | 'ready' | 'error';
 export interface UseLoadDataResult {
   status: DataSourceStatus;
   error: string | null;
+  retry: () => void;
 }
 
 /**
  * Kicks off the DuckDB data load once on mount and tracks its status.
  *
  * Consumers should gate any queries on `status === 'ready'`.
+ * Call `retry()` to re-attempt after an error.
  */
 export function useLoadData(): UseLoadDataResult {
   const [status, setStatus] = useState<DataSourceStatus>('loading');
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setStatus('loading');
+    setError(null);
     loadData()
       .then(() => {
         if (!cancelled) setStatus('ready');
@@ -40,7 +45,9 @@ export function useLoadData(): UseLoadDataResult {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [retryCount]);
 
-  return { status, error };
+  const retry = useCallback(() => setRetryCount((c) => c + 1), []);
+
+  return { status, error, retry };
 }

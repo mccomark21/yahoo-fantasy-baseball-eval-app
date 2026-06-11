@@ -92,6 +92,8 @@ export function FilterBar({
       <button
         type="button"
         className="flex w-full items-center justify-between px-3 py-2.5 md:hidden"
+        aria-expanded={isOpen}
+        aria-controls="filterbar-panel"
         onClick={() => setIsOpen((o) => !o)}
       >
         <div className="flex items-center gap-2">
@@ -109,6 +111,7 @@ export function FilterBar({
 
       {/* Filter content — collapsible on mobile, always visible on desktop */}
       <div
+        id="filterbar-panel"
         className={`grid transition-[grid-template-rows] duration-200 ease-out md:!grid-rows-[1fr] ${
           isMobile ? (isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]') : 'grid-rows-[1fr]'
         }`}
@@ -117,12 +120,12 @@ export function FilterBar({
           <div className="flex flex-col gap-3 px-3 pb-3 md:flex-row md:flex-wrap md:items-center md:gap-3 md:px-4 md:py-4">
             {/* League selector */}
             <div className="flex flex-col gap-1 w-full md:w-auto">
-              <label className="text-xs font-medium text-muted-foreground">League</label>
+              <label htmlFor="filter-league" className="text-xs font-medium text-muted-foreground">League</label>
               <Select
                 value={selectedLeague}
                 onValueChange={(v) => onLeagueChange(v)}
               >
-                <SelectTrigger className="w-full md:w-[200px]">
+                <SelectTrigger id="filter-league" className="w-full md:w-[200px]">
                   <SelectValue placeholder="League" />
                 </SelectTrigger>
                 <SelectContent>
@@ -138,8 +141,9 @@ export function FilterBar({
             {/* Fantasy Team multi-select — hitters and prospects */}
             {(hf != null || prpf != null) && (
               <div className="flex flex-col gap-1 w-full md:w-auto">
-                <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
+                <label htmlFor="filter-fantasy-team" className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
                 <MultiSelect
+                  id="filter-fantasy-team"
                   options={leagueFantasyTeams}
                   selected={filters.selectedTeams}
                   onChange={(teams) => onFiltersChange({ ...filters, selectedTeams: teams })}
@@ -156,8 +160,9 @@ export function FilterBar({
             {/* Position multi-select */}
             {(hf != null || prpf != null) && (
               <div className="flex flex-col gap-1 w-full md:w-auto">
-                <label className="text-xs font-medium text-muted-foreground">Position</label>
+                <label htmlFor="filter-position" className="text-xs font-medium text-muted-foreground">Position</label>
                 <MultiSelect
+                  id="filter-position"
                   options={
                     hf != null
                       ? filterOptions.positions.filter((p) => p !== 'SP' && p !== 'RP')
@@ -172,8 +177,9 @@ export function FilterBar({
 
             {prpf != null && prospectLevelOptions.length > 0 && (
               <div className="flex flex-col gap-1 w-full md:w-auto">
-                <label className="text-xs font-medium text-muted-foreground">Level</label>
+                <label htmlFor="filter-level" className="text-xs font-medium text-muted-foreground">Level</label>
                 <MultiSelect
+                  id="filter-level"
                   options={prospectLevelOptions}
                   selected={prpf.selectedLevels}
                   onChange={(levels) => onFiltersChange({ ...prpf, selectedLevels: levels })}
@@ -184,14 +190,14 @@ export function FilterBar({
 
             {prpf != null && (
               <div className="flex flex-col gap-1 w-full md:w-[140px]">
-                <label className="text-xs font-medium text-muted-foreground">Rostered</label>
+                <label htmlFor="filter-rostered" className="text-xs font-medium text-muted-foreground">Rostered</label>
                 <Select
                   value={prpf.rosterFilter}
                   onValueChange={(value) =>
                     onFiltersChange({ ...prpf, rosterFilter: value as 'all' | 'rostered' | 'available' })
                   }
                 >
-                  <SelectTrigger className="w-full md:w-[140px]">
+                  <SelectTrigger id="filter-rostered" className="w-full md:w-[140px]">
                     <SelectValue placeholder="All" />
                   </SelectTrigger>
                   <SelectContent>
@@ -205,12 +211,12 @@ export function FilterBar({
 
             {prpf != null && (
               <div className="flex flex-col gap-1 w-full md:w-[140px]">
-                <label className="text-xs font-medium text-muted-foreground">Age ≤</label>
+                <label htmlFor="filter-age" className="text-xs font-medium text-muted-foreground">Age ≤</label>
                 <Select
                   value={prpf.maxAge != null ? String(prpf.maxAge) : 'any'}
                   onValueChange={(value) => onFiltersChange({ ...prpf, maxAge: value === 'any' ? null : Number(value) })}
                 >
-                  <SelectTrigger className="w-full md:w-[120px]">
+                  <SelectTrigger id="filter-age" className="w-full md:w-[120px]">
                     <SelectValue placeholder="Any" />
                   </SelectTrigger>
                   <SelectContent>
@@ -228,8 +234,9 @@ export function FilterBar({
             {/* Fantasy Team multi-select — pitchers / relievers / injured (right-aligned) */}
             {(pf != null || rf != null || inf != null) && (
               <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
-                <label className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
+                <label htmlFor="filter-fantasy-team" className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
                 <MultiSelect
+                  id="filter-fantasy-team"
                   options={leagueFantasyTeams}
                   selected={filters.selectedTeams}
                   onChange={(teams) => onFiltersChange({ ...filters, selectedTeams: teams })}
@@ -247,8 +254,9 @@ export function FilterBar({
             {/* Time Window toggle */}
             {hf != null && (
               <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
-                <label className="text-xs font-medium text-muted-foreground">Time Window</label>
+                <label id="filter-time-window-label" className="text-xs font-medium text-muted-foreground">Time Window</label>
                 <ToggleGroup
+                  aria-labelledby="filter-time-window-label"
                   value={[hf.timeWindow]}
                   onValueChange={(newValue: string[]) => {
                     if (newValue.length > 0) {
@@ -267,7 +275,7 @@ export function FilterBar({
             )}
 
             <div className="flex flex-col gap-1 w-full md:w-[220px]">
-              <label className="text-xs font-medium text-muted-foreground">
+              <label htmlFor="filter-player-name" className="text-xs font-medium text-muted-foreground">
                 {mode === 'hitters'
                   ? 'Player Name'
                   : mode === 'pitchers'
@@ -279,6 +287,7 @@ export function FilterBar({
                       : 'Prospect Name'}
               </label>
               <Input
+                id="filter-player-name"
                 value={searchDraft}
                 onChange={(event) => onSearchDraftChange(event.target.value)}
                 onKeyDown={(event) => {

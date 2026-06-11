@@ -45,6 +45,12 @@ function getSortValue(row: ReliefTrendRow, key: ReliefSortKey): number | string 
   return row.player_name;
 }
 
+function sparklineTrendClass(first: number, last: number): string {
+  if (last < first) return 'text-emerald-600 dark:text-emerald-400';
+  if (last > first) return 'text-rose-600 dark:text-rose-400';
+  return 'text-muted-foreground';
+}
+
 function TrendSparkline({ series }: { series: (number | null)[] }) {
   const defined = series.filter((v): v is number => v != null);
   if (defined.length < 2) {
@@ -53,8 +59,7 @@ function TrendSparkline({ series }: { series: (number | null)[] }) {
 
   const first = defined[0];
   const last = defined[defined.length - 1];
-  // Lower rank = better, so improvement means end < start
-  const color = last < first ? '#22c55e' : last > first ? '#ef4444' : '#6b7280';
+  const colorClass = sparklineTrendClass(first, last);
 
   const width = 64;
   const height = 24;
@@ -87,7 +92,7 @@ function TrendSparkline({ series }: { series: (number | null)[] }) {
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
-      className="shrink-0"
+      className={`shrink-0 ${colorClass}`}
       aria-hidden="true"
     >
       {segments.map((pts, i) =>
@@ -97,13 +102,13 @@ function TrendSparkline({ series }: { series: (number | null)[] }) {
             cx={pts[0].split(',')[0]}
             cy={pts[0].split(',')[1]}
             r="1.5"
-            fill={color}
+            fill="currentColor"
           />
         ) : (
           <polyline
             key={i}
             fill="none"
-            stroke={color}
+            stroke="currentColor"
             strokeWidth="1.75"
             strokeLinecap="round"
             strokeLinejoin="round"

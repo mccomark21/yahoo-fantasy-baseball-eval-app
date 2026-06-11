@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLoadData } from '@/lib/data-source';
 import {
   getFilterOptions,
@@ -32,9 +32,9 @@ import { InjuredPitcherTable } from '@/components/InjuredPitcherTable';
 import { ProspectTable } from '@/components/ProspectTable';
 import { type ReliefScoringMode } from '@/lib/pitcherlist-client';
 import { fetchLatestProspects, type ProspectSourceStatus } from '@/lib/prospects-client';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { NavTabs } from '@/components/NavTabs';
 import { Toggle } from '@/components/ui/toggle';
-import { Moon, Sun } from 'lucide-react';
+import { AlertCircle, Moon, Sun } from 'lucide-react';
 import { getDefaultRosterTeams } from '@/lib/fantasy-teams';
 import { useAsyncTask } from '@/lib/use-async-task';
 import {
@@ -74,7 +74,8 @@ export default function App() {
 
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
-  const { status, error } = useLoadData();
+  const { status, error, retry } = useLoadData();
+  const contentRef = useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('hitters');
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
     leagues: [],
@@ -368,12 +369,44 @@ export default function App() {
 
   if (status === 'loading') {
     return (
-      <div className="flex items-center justify-center h-dvh">
-        <div className="text-center">
-          <div className="text-lg font-medium">Loading Fantasy Baseball Research Data</div>
-          <div className="text-sm text-muted-foreground mt-2">
-            Initializing DuckDB and fetching data...
+      <div className="flex flex-col h-dvh overflow-hidden" role="status" aria-label="Loading player data" aria-busy="true">
+        <div className="bg-navy-deep px-3 py-2 md:px-4 md:py-3 flex-shrink-0">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="h-5 w-44 rounded bg-white/20 animate-pulse" />
+              <div className="h-7 w-16 rounded bg-white/20 animate-pulse" />
+            </div>
+            <div className="flex gap-0.5 self-start">
+              {[72, 82, 82, 66, 82].map((w, i) => (
+                <div key={i} className="h-9 rounded-sm bg-white/20 animate-pulse" style={{ width: `${w}px` }} />
+              ))}
+            </div>
           </div>
+        </div>
+        <div className="border-b bg-surface px-3 py-2 md:px-4 flex flex-wrap items-center gap-2 flex-shrink-0">
+          <div className="h-8 w-36 rounded bg-surface-header animate-pulse" />
+          <div className="h-8 w-28 rounded bg-surface-header animate-pulse" />
+          <div className="h-8 w-20 rounded bg-surface-header animate-pulse" />
+          <div className="h-8 w-20 rounded bg-surface-header animate-pulse" />
+          <div className="ml-auto h-8 w-48 rounded bg-surface-header animate-pulse" />
+        </div>
+        <div className="flex-1 overflow-hidden flex flex-col">
+          <div className="bg-surface-header border-b border-border h-9 flex-shrink-0" />
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-4 px-4 border-b border-border animate-pulse"
+              style={{ height: '41px', animationDelay: `${i * 60}ms` }}
+            >
+              <div className="h-3.5 w-6 rounded bg-surface-header flex-shrink-0" />
+              <div className="h-3.5 rounded bg-surface" style={{ width: `${100 + (i % 3) * 36}px` }} />
+              <div className="h-3.5 w-14 rounded bg-surface" />
+              <div className="h-3.5 w-12 rounded bg-surface ml-auto" />
+              <div className="h-3.5 w-12 rounded bg-surface" />
+              <div className="h-3.5 w-12 rounded bg-surface" />
+              <div className="h-3.5 w-10 rounded bg-surface" />
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -381,10 +414,31 @@ export default function App() {
 
   if (status === 'error') {
     return (
-      <div className="flex items-center justify-center h-dvh">
-        <div className="text-center text-destructive">
-          <div className="text-lg font-medium">Failed to load data</div>
-          <div className="text-sm mt-2">{error}</div>
+      <div className="flex items-center justify-center h-dvh bg-surface" role="alert" aria-live="assertive">
+        <div className="bg-white rounded-lg border border-border p-8 max-w-sm w-full mx-4 text-center shadow-float">
+          <div className="w-10 h-10 rounded-full bg-surface flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-5 h-5 text-muted-foreground" />
+          </div>
+          <h2 className="text-base font-semibold text-foreground mb-2">Couldn't load player data</h2>
+          <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
+            This is usually a network issue. Try refreshing.
+          </p>
+          <button
+            onClick={retry}
+            className="w-full bg-primary hover:bg-navy-mid text-white text-sm font-medium rounded px-4 py-2 transition-colors duration-150 cursor-pointer"
+          >
+            Try again
+          </button>
+          {error && (
+            <details className="mt-4 text-left">
+              <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors duration-100">
+                Technical details
+              </summary>
+              <pre className="mt-2 text-xs text-muted-foreground bg-surface rounded p-3 overflow-auto max-h-32 font-mono whitespace-pre-wrap break-all">
+                {error}
+              </pre>
+            </details>
+          )}
         </div>
       </div>
     );
@@ -392,71 +446,33 @@ export default function App() {
 
   return (
     <div className="flex min-h-0 flex-col h-dvh overflow-hidden">
-      <header className="px-3 py-2 md:px-4 md:py-3 border-b">
+      <header className="bg-navy-deep px-3 py-2 md:px-4 md:py-3">
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2">
-            <h1 className="text-lg md:text-xl font-semibold tracking-tight">Fantasy Baseball Research</h1>
+            <h1 className="text-lg md:text-xl font-semibold tracking-tight text-white">Fantasy Baseball Research</h1>
             <Toggle
-              variant="outline"
+              variant="default"
               size="sm"
               aria-label="Toggle dark mode"
               pressed={theme === 'dark'}
               onPressedChange={(pressed) => setTheme(pressed ? 'dark' : 'light')}
+              className="border border-white/20 text-white/70 hover:bg-white/10 hover:text-white hover:border-white/40 aria-pressed:text-white aria-pressed:bg-white/15 aria-pressed:border-white/30"
             >
               {theme === 'dark' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
               <span className="hidden sm:inline">{theme === 'dark' ? 'Dark' : 'Light'}</span>
             </Toggle>
           </div>
-          <ToggleGroup
-            value={[viewMode]}
-            onValueChange={(next: string[]) => {
-              if (next.length > 0) {
-                const nextView = next[next.length - 1] as
-                  | 'hitters'
-                  | 'pitchers'
-                  | 'relievers'
-                  | 'injured'
-                  | 'prospects';
-                if (nextView !== viewMode) {
-                  setSearchDraft('');
-                  setPlayerSearch('');
-                }
-                setViewMode(nextView);
+          <NavTabs
+            value={viewMode}
+            onChange={(next) => {
+              if (next !== viewMode) {
+                setSearchDraft('');
+                setPlayerSearch('');
               }
+              setViewMode(next);
             }}
-            className="self-start rounded-lg bg-teal-950 p-0.5"
-          >
-            <ToggleGroupItem
-              value="hitters"
-              className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
-            >
-              Hitters
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="pitchers"
-              className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
-            >
-              SP Rankings
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="relievers"
-              className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
-            >
-              RP Rankings
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="injured"
-              className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
-            >
-              Injured
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="prospects"
-              className="h-9 px-3.5 text-sm font-semibold text-teal-100 aria-pressed:bg-teal-700 aria-pressed:text-white data-[state=on]:bg-teal-700 data-[state=on]:text-white"
-            >
-              Prospects
-            </ToggleGroupItem>
-          </ToggleGroup>
+            contentRef={contentRef}
+          />
         </div>
       </header>
       <FilterBar
@@ -473,6 +489,11 @@ export default function App() {
         onSearchDraftChange={setSearchDraft}
         onSearchSubmit={() => setPlayerSearch(searchDraft.trim())}
       />
+      <div
+        ref={contentRef}
+        tabIndex={-1}
+        className="flex flex-col flex-1 min-h-0 outline-none"
+      >
       {viewMode === 'hitters' ? (
         <PlayerTable
           data={players}
@@ -483,7 +504,7 @@ export default function App() {
         <>
           <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
             {pitcherView.error ? (
-              <span className="text-destructive">Pitcher List fetch failed: {pitcherView.error}</span>
+              <span role="alert" className="text-destructive">Pitcher List fetch failed: {pitcherView.error}</span>
             ) : pitcherView.meta ? (
               <span>
                 {pitcherView.meta.title}
@@ -493,6 +514,7 @@ export default function App() {
                   href={pitcherView.meta.source_url}
                   target="_blank"
                   rel="noreferrer"
+                  aria-label={`Source: ${pitcherView.meta.title}`}
                   className="underline"
                 >
                   Source
@@ -508,7 +530,7 @@ export default function App() {
         <>
           <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
             {reliefView.error ? (
-              <span className="text-destructive">Reliever rankings fetch failed: {reliefView.error}</span>
+              <span role="alert" className="text-destructive">Reliever rankings fetch failed: {reliefView.error}</span>
             ) : reliefView.meta ? (
               <span>
                 {reliefView.meta.title}
@@ -519,6 +541,7 @@ export default function App() {
                   href={reliefView.meta.source_url}
                   target="_blank"
                   rel="noreferrer"
+                  aria-label={`Source: ${reliefView.meta.title}`}
                   className="underline"
                 >
                   Source
@@ -534,7 +557,7 @@ export default function App() {
         <>
           <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
             {injuredView.error ? (
-              <span className="text-destructive">Injured pitcher rankings fetch failed: {injuredView.error}</span>
+              <span role="alert" className="text-destructive">Injured pitcher rankings fetch failed: {injuredView.error}</span>
             ) : injuredView.meta ? (
               <span>
                 {injuredView.meta.title}
@@ -544,6 +567,7 @@ export default function App() {
                   href={injuredView.meta.source_urls.sp}
                   target="_blank"
                   rel="noreferrer"
+                  aria-label="Starting pitcher injury data source"
                   className="underline"
                 >
                   SP Source
@@ -553,6 +577,7 @@ export default function App() {
                   href={injuredView.meta.source_urls.rp}
                   target="_blank"
                   rel="noreferrer"
+                  aria-label="Relief pitcher injury data source"
                   className="underline"
                 >
                   RP Source
@@ -568,7 +593,7 @@ export default function App() {
         <>
           <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
             {prospectError ? (
-              <span className="text-destructive">Prospect rankings fetch failed: {prospectError}</span>
+              <span role="alert" className="text-destructive">Prospect rankings fetch failed: {prospectError}</span>
             ) : prospectsMeta ? (
               <span>
                 {prospectsMeta.title}
@@ -589,6 +614,7 @@ export default function App() {
           <ProspectTable data={prospects} isLoading={prospectLoading} />
         </>
       )}
+      </div>
     </div>
   );
 }

@@ -365,6 +365,7 @@ function PlayerCard({
       <button
         type="button"
         className="w-full text-left"
+        aria-expanded={expanded}
         onClick={onToggle}
       >
         <div className="flex items-start justify-between gap-2">

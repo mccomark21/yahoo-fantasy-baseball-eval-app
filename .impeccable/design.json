@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-10T00:00:00.000Z",
+  "title": "Design System: Fantasy Baseball Research",
+  "extensions": {
+    "colorMeta": {
+      "navy-deep":      { "role": "primary",   "displayName": "MLB Navy",          "canonical": "oklch(0.22 0.065 257)", "tonalRamp": ["#000D1F","#001538","#002D62","#1A3D75","#395E96","#6689B8","#A5BDD5","#DCE5EF"] },
+      "navy-mid":       { "role": "secondary",  "displayName": "Navy Mid",           "canonical": "oklch(0.35 0.065 254)", "tonalRamp": ["#001538","#0A2255","#1A3D75","#2E5498","#5278B4","#8AAAD0","#C2D3E8","#EBF0F8"] },
+      "red":            { "role": "primary",   "displayName": "MLB Red",            "canonical": "oklch(0.47 0.21 22)",  "tonalRamp": ["#430010","#7A0020","#BF0D3E","#D43F5E","#E47585","#EFA8B2","#F7D4D9","#FDF0F2"] },
+      "navy-ink":       { "role": "neutral",   "displayName": "Navy Ink",           "canonical": "oklch(0.14 0.05 254)", "tonalRamp": ["#05080F","#0C1829","#1A2A42","#2D3E56","#4A5E76","#7A90A8","#BECDD8","#EDF1F5"] },
+      "white":          { "role": "neutral",   "displayName": "White",              "canonical": "oklch(1 0 0)",         "tonalRamp": ["#B0BCC8","#C6D0DA","#D8E1EA","#E7EDF4","#EFF3FA","#F5F8FC","#FAFBFE","#FFFFFF"] },
+      "surface":        { "role": "neutral",   "displayName": "Surface",            "canonical": "oklch(0.965 0.012 254)", "tonalRamp": ["#B8C4D6","#CAD4E4","#D8E1ED","#E2E8F3","#EBF0F8","#EFF3FA","#F5F8FC","#FAFBFE"] },
+      "surface-header": { "role": "neutral",   "displayName": "Surface Header",     "canonical": "oklch(0.93 0.018 254)", "tonalRamp": ["#A5B5CA","#BAC8DA","#CBD8E8","#D8E1ED","#E2E8F3","#EBF0F8","#F2F5FB","#F9FAFD"] },
+      "muted":          { "role": "neutral",   "displayName": "Muted",              "canonical": "oklch(0.55 0.025 254)", "tonalRamp": ["#1C2A38","#2E3F52","#445668","#5B6E80","#677286","#8293A4","#AEBCC8","#D8E1EA"] },
+      "border":         { "role": "neutral",   "displayName": "Border",             "canonical": "oklch(0.86 0.018 254)", "tonalRamp": ["#8FA0B4","#A8B8CA","#BCC9D8","#CBD6E4","#CDD4E2","#D9E2EC","#E8EDF5","#F4F7FB"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "App title and single top-level heading per page." },
+      "title":    { "displayName": "Title",    "purpose": "Section headings, view name labels, filter panel titles." },
+      "body":     { "displayName": "Body",     "purpose": "Table cell values, filter descriptions, inline copy." },
+      "label":    { "displayName": "Label",    "purpose": "Column headers exclusively. Always uppercase with tracked letter-spacing." },
+      "mono":     { "displayName": "Mono",     "purpose": "All numeric stat values in data tables. Enforces decimal alignment." }
+    },
+    "shadows": [
+      { "name": "popover", "value": "0 4px 20px rgba(0, 45, 98, 0.12)", "purpose": "Floating layers only: dropdowns, tooltips, command palette, modals." }
+    ],
+    "motion": [
+      { "name": "ease-standard",  "value": "cubic-bezier(0.0, 0.0, 0.2, 1)", "purpose": "Default easing for state transitions (color, opacity, border)." },
+      { "name": "duration-fast",  "value": "100ms", "purpose": "Hover state feedback (tab opacity, chip color)." },
+      { "name": "duration-base",  "value": "150ms", "purpose": "Button fill changes, row hover fill, input focus ring." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main action button. Navy fill communicates authority without visual noise.",
+      "html": "<button class=\"ds-btn-primary\">Add Player</button>",
+      "css": ".ds-btn-primary { background: #002D62; color: #FFFFFF; padding: 8px 16px; font-family: 'Geist Variable', sans-serif; font-size: 0.875rem; font-weight: 500; border: none; border-radius: 4px; cursor: pointer; transition: background-color 150ms cubic-bezier(0, 0, 0.2, 1); } .ds-btn-primary:hover { background: #1A3D75; } .ds-btn-primary:focus-visible { outline: 2px solid #002D62; outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.4; pointer-events: none; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary action. Quiet by default; border shifts to navy on hover.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: #0C1829; padding: 8px 16px; font-family: 'Geist Variable', sans-serif; font-size: 0.875rem; font-weight: 500; border: 1px solid #CDD4E2; border-radius: 4px; cursor: pointer; transition: border-color 100ms cubic-bezier(0, 0, 0.2, 1), color 100ms cubic-bezier(0, 0, 0.2, 1); } .ds-btn-ghost:hover { border-color: #002D62; color: #002D62; } .ds-btn-ghost:focus-visible { outline: 2px solid #002D62; outline-offset: 2px; } .ds-btn-ghost:disabled { opacity: 0.4; pointer-events: none; }"
+    },
+    {
+      "name": "Nav Tab Strip",
+      "kind": "nav",
+      "refersTo": "button-primary",
+      "description": "Primary view switcher. Navy band is the identity anchor; red bottom border marks the active tab.",
+      "html": "<nav class=\"ds-nav-strip\"><button class=\"ds-nav-tab ds-nav-tab--active\">Hitters</button><button class=\"ds-nav-tab\">SP Rankings</button><button class=\"ds-nav-tab\">RP Rankings</button></nav>",
+      "css": ".ds-nav-strip { background: #002D62; padding: 8px 12px; display: flex; gap: 2px; } .ds-nav-tab { background: transparent; color: rgba(255,255,255,0.7); border: none; border-bottom: 2px solid transparent; padding: 6px 14px; font-family: 'Geist Variable', sans-serif; font-size: 0.875rem; font-weight: 600; border-radius: 4px 4px 0 0; cursor: pointer; transition: color 100ms, border-color 100ms; } .ds-nav-tab:hover { color: rgba(255,255,255,0.9); } .ds-nav-tab--active { color: #FFFFFF; border-bottom-color: #BF0D3E; } .ds-nav-tab:focus-visible { outline: 2px solid rgba(255,255,255,0.6); outline-offset: 1px; }"
+    },
+    {
+      "name": "Filter Chip",
+      "kind": "chip",
+      "refersTo": "chip-default",
+      "description": "Selection filter. White at rest, navy fill when selected. Used for position, team, and time-window filters.",
+      "html": "<div class=\"ds-chip-group\"><button class=\"ds-chip ds-chip--selected\">STD</button><button class=\"ds-chip\">30D</button><button class=\"ds-chip\">14D</button><button class=\"ds-chip\">7D</button></div>",
+      "css": ".ds-chip-group { display: flex; gap: 4px; } .ds-chip { background: #FFFFFF; color: #677286; border: 1px solid #CDD4E2; padding: 4px 10px; font-family: 'Geist Variable', sans-serif; font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 4px; cursor: pointer; transition: background-color 100ms, color 100ms, border-color 100ms; } .ds-chip:hover { background: #EFF3FA; } .ds-chip--selected { background: #002D62; color: #FFFFFF; border-color: #002D62; } .ds-chip--selected:hover { background: #1A3D75; border-color: #1A3D75; } .ds-chip:focus-visible { outline: 2px solid #002D62; outline-offset: 1px; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Search and text input. White fill, hairline border, navy focus ring.",
+      "html": "<div class=\"ds-input-wrapper\"><input class=\"ds-input\" type=\"text\" placeholder=\"Search players…\" /></div>",
+      "css": ".ds-input-wrapper { position: relative; } .ds-input { width: 100%; background: #FFFFFF; color: #0C1829; border: 1px solid #CDD4E2; border-radius: 4px; padding: 6px 10px; font-family: 'Geist Variable', sans-serif; font-size: 0.875rem; font-weight: 400; outline: none; transition: border-color 150ms, box-shadow 150ms; } .ds-input::placeholder { color: #677286; opacity: 1; } .ds-input:focus { border-color: #002D62; box-shadow: 0 0 0 2px rgba(0, 45, 98, 0.2); } .ds-input:disabled { background: #EFF3FA; opacity: 0.5; }"
+    },
+    {
+      "name": "Data Table",
+      "kind": "custom",
+      "description": "Primary UI surface. Strong headers, clean rows, monospace stat values.",
+      "html": "<table class=\"ds-table\"><thead><tr><th class=\"ds-th\">Player</th><th class=\"ds-th ds-th--sortable ds-th--active\">Composite ▲</th><th class=\"ds-th\">xwOBA</th><th class=\"ds-th\">Z-Score</th></tr></thead><tbody><tr class=\"ds-tr\"><td class=\"ds-td\">Mike Trout</td><td class=\"ds-td ds-td--mono\">0.84</td><td class=\"ds-td ds-td--mono\">.398</td><td class=\"ds-td ds-td--mono\">2.10</td></tr><tr class=\"ds-tr ds-tr--hover\"><td class=\"ds-td\">Juan Soto</td><td class=\"ds-td ds-td--mono\">0.79</td><td class=\"ds-td ds-td--mono\">.385</td><td class=\"ds-td ds-td--mono\">1.87</td></tr></tbody></table>",
+      "css": ".ds-table { width: 100%; border-collapse: collapse; font-family: 'Geist Variable', sans-serif; } .ds-th { background: #E2E8F3; color: #0C1829; font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; padding: 8px 12px; text-align: left; border-bottom: 1px solid #CDD4E2; position: sticky; top: 0; } .ds-th--active { color: #1A3D75; } .ds-th--sortable { cursor: pointer; } .ds-th--sortable:hover { color: #002D62; } .ds-tr { background: #FFFFFF; border-bottom: 1px solid #CDD4E2; transition: background-color 100ms; } .ds-tr:hover { background: #EFF3FA; } .ds-td { padding: 8px 12px; font-size: 0.875rem; color: #0C1829; } .ds-td--mono { font-family: 'Geist Mono Variable', monospace; font-size: 0.8125rem; text-align: right; }"
+    },
+    {
+      "name": "Trend Badge",
+      "kind": "chip",
+      "description": "Hot/cold trend signal on prospect and stat cells. Surface Header background keeps red text scarce.",
+      "html": "<span class=\"ds-badge ds-badge--hot\">🔥 Hot</span><span class=\"ds-badge ds-badge--cold\">🧊 Cold</span><span class=\"ds-badge ds-badge--rostered\">Rostered</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 4px; font-family: 'Geist Variable', sans-serif; font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; } .ds-badge--hot { background: #E2E8F3; color: #BF0D3E; } .ds-badge--cold { background: #EFF3FA; color: #677286; } .ds-badge--rostered { background: #1A3D75; color: #FFFFFF; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Analyst's Dugout",
+    "overview": "A purpose-built analytical workbench for fantasy baseball managers who think like scouts. Every decision on the screen — color, weight, density — comes from one question: does this help the manager make a call faster? The interface brings MLB's own visual language (Navy authority, Red urgency) into a product context where data is the protagonist and chrome is the support staff.\n\nThe palette is overtly sport-native. MLB Navy (#002D62) anchors structure and hierarchy; MLB Red (#BF0D3E) appears only where the data demands attention — active states, live trend signals, high-rank indicators. The surface is white and near-white with a cool navy tint, never warm, never cream. Depth comes from tonal layering, not shadows. The single typeface (Geist Variable) covers every role from column headers to stat values; no display face, no serif callout, no second family.\n\nThis system explicitly rejects: the generic shadcn/Vercel defaults; the ESPN/Yahoo portal aesthetic; and the teal palette that existed before this system.",
+    "keyCharacteristics": [
+      "MLB Navy (#002D62) header band gives the tool an unmistakable sport-native identity from first load",
+      "MLB Red (#BF0D3E) appears on ≤5% of any screen — its scarcity is what makes it readable as a signal",
+      "Tables are the primary surface: strong column headers, clear hover and selection states, monospace data values",
+      "Single typeface (Geist Variable + Geist Mono Variable) with no secondary faces",
+      "Cool navy direction on all neutral surfaces — no warm tints, no cream, no beige"
+    ],
+    "rules": [
+      { "name": "The Red Scarcity Rule", "body": "MLB Red (#BF0D3E) is reserved for active selection indicators and genuine urgency signals. ≤5% screen area per view. Never decorative.", "section": "colors" },
+      { "name": "The Navy-Tint Discipline Rule", "body": "Every neutral surface uses the same cool navy hue direction (~254°). Warm tints are prohibited.", "section": "colors" },
+      { "name": "The Single-Family Rule", "body": "Geist Variable and Geist Mono Variable are the only typefaces. No display font, no serif, no second sans.", "section": "typography" },
+      { "name": "The Mono-Data Rule", "body": "Every numeric stat cell renders in Geist Mono Variable. Mixed proportional/monospace rendering in stat tables is prohibited.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Surfaces are flat at rest. Shadow appears only on floating layers (modals, popovers, tooltips).", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use MLB Navy (#002D62) as the header band fill — the identity anchor",
+      "Do render every numeric stat column in Geist Mono Variable",
+      "Do apply uppercase + 0.06em letter-spacing to every column header",
+      "Do keep MLB Red (#BF0D3E) to ≤5% of screen area per view",
+      "Do use the cool navy direction on all neutral surfaces",
+      "Do target WCAG AA contrast: ≥4.5:1 body text, ≥3:1 large text",
+      "Do use box-shadow: 0 4px 20px rgba(0, 45, 98, 0.12) on floating layers only"
+    ],
+    "donts": [
+      "Don't use the shadcn default achromatic palette (chroma-0 tokens)",
+      "Don't use the old teal palette (teal-950, teal-700, oklch hue 180–210 range)",
+      "Don't use warm neutrals: cream, beige, sand, warm gray",
+      "Don't use MLB Red on non-active, non-destructive, non-urgent elements",
+      "Don't use border-left/border-right wider than 1px as a colored card accent",
+      "Don't introduce a second typeface",
+      "Don't add shadow to flat content surfaces",
+      "Don't use gradient text (background-clip: text)"
+    ]
+  }
+}
