@@ -159,6 +159,16 @@
   }
 }
 
+@layer utilities {
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /* Collapsible filter grid rows */
 .grid-rows-\[0fr\] {
   grid-template-rows: 0fr;

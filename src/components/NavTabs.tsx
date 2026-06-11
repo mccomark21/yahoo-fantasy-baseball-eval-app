@@ -43,8 +43,8 @@ export function NavTabs({ value, onChange, contentRef }: NavTabsProps) {
   }
 
   return (
-    <nav aria-label="View navigation" className="self-start">
-      <div role="tablist" className="flex flex-row items-center">
+    <nav aria-label="View navigation" className="w-full">
+      <div role="tablist" className="flex flex-row items-center overflow-x-auto scrollbar-hide">
         {TABS.map((tab, idx) => {
           const isActive = tab.value === value;
           return (
@@ -59,7 +59,7 @@ export function NavTabs({ value, onChange, contentRef }: NavTabsProps) {
               }}
               onKeyDown={(e) => handleKeyDown(e, idx)}
               className={[
-                'h-9 px-3.5 text-sm font-semibold whitespace-nowrap transition-colors duration-100',
+                'h-11 sm:h-9 px-3.5 text-sm font-semibold whitespace-nowrap transition-colors duration-100 flex-shrink-0',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 rounded-sm',
                 isActive
                   ? 'text-white border-b-2 border-mlb-red'
