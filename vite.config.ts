@@ -1336,11 +1336,13 @@ function parseFantraxProspectsPage(html: string): ProspectSourceRow[] {
   )
 }
 
-function parsePitcherListProspectsPage(html: string): ProspectSourceRow[] {
+export function parsePitcherListProspectsPage(html: string): ProspectSourceRow[] {
   return parseSimpleProspectTableRows(
     html,
     'pitcherlist',
-    /rank\s+player\s+team\s+position\s+age\s+previous ranking\s+\+\/-/i,
+    // Pitcher List's table header reads "Previous Rank" (issue #30); tolerate the
+    // older "Previous Ranking" wording too so a future copy tweak doesn't silently break it.
+    /rank\s+player\s+team\s+position\s+age\s+previous rank(?:ing)?\s+\+\/-/i,
     (cells) => {
       const rank = Number.parseInt(cells[0] ?? '', 10)
       if (!Number.isFinite(rank) || rank < 1 || rank > 200) return null
@@ -1707,6 +1709,17 @@ async function fetchLatestProspects(): Promise<ProspectsLatestResponse> {
     ...tjstats.rows,
   ]
   const sources = [mlb.status, fangraphs.status, prospectsLive.status, fantrax.status, pitcherlist.status, tjstats.status]
+
+  // Guard (issue #30): a single source that errors or returns zero rows is otherwise dropped
+  // silently — the consensus still builds from the rest and the snapshot looks healthy. Surface
+  // it loudly so a parse break or stale feed is visible instead of vanishing.
+  const droppedSources = sources.filter((source) => source.status === 'error' || source.row_count === 0)
+  for (const source of droppedSources) {
+    console.warn(
+      `[prospects] source "${source.source}" contributed 0 rows to the consensus` +
+        (source.error ? `: ${source.error}` : ' (no error reported)')
+    )
+  }
 
   if (allRows.length === 0) {
     const errors = sources
