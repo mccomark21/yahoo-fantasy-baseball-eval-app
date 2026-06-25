@@ -48,11 +48,11 @@ function hasNoStatcastData(row: PlayerRow): boolean {
 
 function getZScoreBgClass(value: number | null): string {
   if (value == null) return '';
-  if (value <= -1.5) return 'bg-red-200 dark:bg-red-900/50';
-  if (value <= -0.5) return 'bg-red-100 dark:bg-red-950/40';
+  if (value <= -1.5) return 'bg-destructive/20 dark:bg-destructive/35';
+  if (value <= -0.5) return 'bg-destructive/10 dark:bg-destructive/20';
   if (value < 0.5) return '';
-  if (value < 1.5) return 'bg-green-100 dark:bg-green-950/40';
-  return 'bg-green-200 dark:bg-green-900/50';
+  if (value < 1.5) return 'bg-navy-deep/8 dark:bg-navy-mid/20';
+  return 'bg-navy-deep/16 dark:bg-navy-mid/35';
 }
 
 function buildSparklinePath(values: number[], width: number, height: number): string {

@@ -21,10 +21,10 @@ interface PitcherTableProps {
 
 function trendPillClass(direction: TrendDirection): string {
   if (direction === 'up' || direction === 'new') {
-    return 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300';
+    return 'bg-navy-deep/10 text-navy-deep dark:bg-navy-mid/40 dark:text-white';
   }
   if (direction === 'down') {
-    return 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300';
+    return 'bg-destructive/10 text-destructive dark:bg-destructive/30 dark:text-white';
   }
   return 'bg-muted text-muted-foreground';
 }
