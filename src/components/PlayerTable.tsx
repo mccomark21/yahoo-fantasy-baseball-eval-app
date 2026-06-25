@@ -15,6 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { EmptyState } from '@/components/EmptyState';
 import {
   Select,
   SelectContent,
@@ -645,7 +646,9 @@ export function PlayerTable({ data, isLoading, showMetricSparklines }: PlayerTab
               />
             ))
           ) : (
-            <div className="p-8 text-center text-muted-foreground">No results.</div>
+            <div className="p-8">
+              <EmptyState hint="Try clearing the Fantasy Team or Position filter." />
+            </div>
           )}
         </div>
 
@@ -706,11 +709,8 @@ export function PlayerTable({ data, isLoading, showMetricSparklines }: PlayerTab
               ))
             ) : (
               <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No results.
+                <TableCell colSpan={columns.length} className="h-24 text-center">
+                  <EmptyState hint="Try clearing the Fantasy Team or Position filter." />
                 </TableCell>
               </TableRow>
             )}

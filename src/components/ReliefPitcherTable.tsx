@@ -8,6 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { EmptyState } from '@/components/EmptyState';
 import { useIsMobile } from '@/lib/use-mobile';
 import type { TrendDirection } from '@/lib/pitcherlist-client';
 import type { ReliefTrendRow } from '@/lib/queries';
@@ -224,7 +225,9 @@ export function ReliefPitcherTable({ data, isLoading }: ReliefPitcherTableProps)
             );
           })
         ) : (
-          <div className="p-8 text-center text-muted-foreground">No results.</div>
+          <div className="p-8">
+            <EmptyState hint="Try clearing the Fantasy Team filter." />
+          </div>
         )}
       </div>
     );
@@ -280,7 +283,9 @@ export function ReliefPitcherTable({ data, isLoading }: ReliefPitcherTableProps)
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No results.</TableCell>
+                <TableCell colSpan={7} className="h-24 text-center">
+                  <EmptyState hint="Try clearing the Fantasy Team filter." />
+                </TableCell>
               </TableRow>
             )}
           </TableBody>

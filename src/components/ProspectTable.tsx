@@ -8,6 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { EmptyState } from '@/components/EmptyState';
 import { useIsMobile } from '@/lib/use-mobile';
 import {
   Select,
@@ -430,7 +431,9 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
             );
           })
         ) : (
-          <div className="p-8 text-center text-muted-foreground">No results.</div>
+          <div className="p-8">
+            <EmptyState hint="Try clearing the Team, Level, or Age filters." />
+          </div>
         )}
       </div>
     );
@@ -572,7 +575,9 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
               })
             ) : (
               <TableRow>
-                <TableCell colSpan={showRankingColumns ? 20 : 11} className="h-24 text-center text-muted-foreground">No results.</TableCell>
+                <TableCell colSpan={showRankingColumns ? 20 : 11} className="h-24 text-center">
+                  <EmptyState hint="Try clearing the Team, Level, or Age filters." />
+                </TableCell>
               </TableRow>
             )}
           </TableBody>

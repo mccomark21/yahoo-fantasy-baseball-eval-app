@@ -8,6 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { EmptyState } from '@/components/EmptyState';
 import { useIsMobile } from '@/lib/use-mobile';
 import type { InjuredPitcherTrendRow } from '@/lib/queries';
 
@@ -120,7 +121,9 @@ export function InjuredPitcherTable({ data, isLoading }: InjuredPitcherTableProp
             );
           })
         ) : (
-          <div className="p-8 text-center text-muted-foreground">No results.</div>
+          <div className="p-8">
+            <EmptyState hint="Try clearing the Fantasy Team filter — injured pitchers are often rostered." />
+          </div>
         )}
       </div>
     );
@@ -164,7 +167,9 @@ export function InjuredPitcherTable({ data, isLoading }: InjuredPitcherTableProp
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No results.</TableCell>
+                <TableCell colSpan={6} className="h-24 text-center">
+                  <EmptyState hint="Try clearing the Fantasy Team filter — injured pitchers are often rostered." />
+                </TableCell>
               </TableRow>
             )}
           </TableBody>

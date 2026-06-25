@@ -465,7 +465,7 @@ export default function App() {
       <div className="flex items-center justify-center h-dvh bg-surface" role="alert" aria-live="assertive">
         <div className="bg-white rounded-lg border border-border p-8 max-w-sm w-full mx-4 text-center shadow-float">
           <div className="w-10 h-10 rounded-full bg-surface flex items-center justify-center mx-auto mb-4">
-            <AlertCircle className="w-5 h-5 text-muted-foreground" />
+            <AlertCircle className="w-5 h-5 text-destructive" />
           </div>
           <h2 className="text-base font-semibold text-foreground mb-2">Couldn't load player data</h2>
           <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
@@ -563,7 +563,7 @@ export default function App() {
                   target="_blank"
                   rel="noreferrer"
                   aria-label={`Source: ${pitcherView.meta.title}`}
-                  className="underline"
+                  className="underline hover:text-navy-mid transition-colors duration-100"
                 >
                   Source
                 </a>
@@ -590,7 +590,7 @@ export default function App() {
                   target="_blank"
                   rel="noreferrer"
                   aria-label={`Source: ${reliefView.meta.title}`}
-                  className="underline"
+                  className="underline hover:text-navy-mid transition-colors duration-100"
                 >
                   Source
                 </a>
@@ -616,7 +616,7 @@ export default function App() {
                   target="_blank"
                   rel="noreferrer"
                   aria-label="Starting pitcher injury data source"
-                  className="underline"
+                  className="underline hover:text-navy-mid transition-colors duration-100"
                 >
                   SP Source
                 </a>
@@ -626,7 +626,7 @@ export default function App() {
                   target="_blank"
                   rel="noreferrer"
                   aria-label="Relief pitcher injury data source"
-                  className="underline"
+                  className="underline hover:text-navy-mid transition-colors duration-100"
                 >
                   RP Source
                 </a>
