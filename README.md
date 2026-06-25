@@ -150,7 +150,7 @@ The app uses different ranking data behavior in local development versus product
 
 - **Three-mode workflow** — evaluate Hitters, Pitchers, and Relievers in one app
 - **Multi-league support** — switch between Yahoo leagues to evaluate different player pools
-- **Default roster focus** — defaults to Free Agent teams when available (across Hitters, Pitchers, Relievers, and Prospects)
+- **Default roster focus** — defaults to Free Agent teams when available (across Hitters, Pitchers, Relievers, Injured, and Prospects)
 - **Sortable data tables** — sort by any visible column
 - **Theme toggle** — light/dark theme persisted via local storage
 - **Responsive UI** — optimized for desktop and mobile usage

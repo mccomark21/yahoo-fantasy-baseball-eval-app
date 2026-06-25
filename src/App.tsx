@@ -142,9 +142,10 @@ export default function App() {
       setHitterFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
       setPitcherFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
       setReliefFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
-      // Injured tab intentionally shows all teams by default — injured pitchers are
-      // typically rostered, so applying the Free Agent default would hide all results.
-      setInjuredFilters((f) => ({ ...f, selectedTeams: [] }));
+      // Injured tab defaults to Free Agent too: the view's purpose is spotting
+      // IL spots to fill from the waiver pool, so available stash candidates lead.
+      // Users can widen the team filter to surface already-rostered injured arms.
+      setInjuredFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
       setProspectFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
 
       if (defaults.length > 0) {
