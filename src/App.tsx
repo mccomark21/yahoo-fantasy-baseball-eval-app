@@ -351,6 +351,14 @@ export default function App() {
     [runQuery, runProspectQuery],
   );
 
+  function changeView(next: ViewMode) {
+    if (next !== viewMode) {
+      setSearchDraft('');
+      setPlayerSearch('');
+    }
+    setViewMode(next);
+  }
+
   const handleLeagueChange = useCallback(async (league: string) => {
     setSelectedLeague(league);
     const teams = await getFantasyTeamsForLeague(league);
@@ -378,7 +386,7 @@ export default function App() {
               <div className="h-7 w-16 rounded bg-white/20 animate-pulse motion-reduce:animate-none" />
             </div>
             <div className="flex gap-0.5">
-              {[72, 82, 82, 66, 82].map((w, i) => (
+              {[64, 72, 78].map((w, i) => (
                 <div key={i} className="h-11 md:h-9 rounded-sm bg-white/20 animate-pulse motion-reduce:animate-none flex-shrink-0" style={{ width: `${w}px` }} />
               ))}
             </div>
@@ -512,13 +520,7 @@ export default function App() {
           </div>
           <NavTabs
             value={viewMode}
-            onChange={(next) => {
-              if (next !== viewMode) {
-                setSearchDraft('');
-                setPlayerSearch('');
-              }
-              setViewMode(next);
-            }}
+            onChange={changeView}
             contentRef={contentRef}
           />
         </div>
