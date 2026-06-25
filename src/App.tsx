@@ -374,12 +374,12 @@ export default function App() {
         <div className="bg-navy-deep px-3 py-2 md:px-4 md:py-3 flex-shrink-0">
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="h-5 w-44 rounded bg-white/20 animate-pulse" />
-              <div className="h-7 w-16 rounded bg-white/20 animate-pulse" />
+              <div className="h-5 w-44 rounded bg-white/20 animate-pulse motion-reduce:animate-none" />
+              <div className="h-7 w-16 rounded bg-white/20 animate-pulse motion-reduce:animate-none" />
             </div>
             <div className="flex gap-0.5">
               {[72, 82, 82, 66, 82].map((w, i) => (
-                <div key={i} className="h-11 md:h-9 rounded-sm bg-white/20 animate-pulse flex-shrink-0" style={{ width: `${w}px` }} />
+                <div key={i} className="h-11 md:h-9 rounded-sm bg-white/20 animate-pulse motion-reduce:animate-none flex-shrink-0" style={{ width: `${w}px` }} />
               ))}
             </div>
           </div>
@@ -388,15 +388,15 @@ export default function App() {
         {/* Filter bar — collapsed toggle on mobile, chips on desktop */}
         <div className="border-b bg-background flex-shrink-0">
           <div className="flex items-center justify-between px-3 py-2.5 md:hidden">
-            <div className="h-4 w-12 rounded bg-surface-header animate-pulse" />
-            <div className="h-4 w-4 rounded bg-surface-header animate-pulse" />
+            <div className="h-4 w-12 rounded bg-surface-header animate-pulse motion-reduce:animate-none" />
+            <div className="h-4 w-4 rounded bg-surface-header animate-pulse motion-reduce:animate-none" />
           </div>
           <div className="hidden md:flex flex-wrap items-center gap-3 px-4 py-4">
-            <div className="h-8 w-36 rounded bg-surface-header animate-pulse" />
-            <div className="h-8 w-28 rounded bg-surface-header animate-pulse" />
-            <div className="h-8 w-20 rounded bg-surface-header animate-pulse" />
-            <div className="h-8 w-20 rounded bg-surface-header animate-pulse" />
-            <div className="ml-auto h-8 w-48 rounded bg-surface-header animate-pulse" />
+            <div className="h-8 w-36 rounded bg-surface-header animate-pulse motion-reduce:animate-none" />
+            <div className="h-8 w-28 rounded bg-surface-header animate-pulse motion-reduce:animate-none" />
+            <div className="h-8 w-20 rounded bg-surface-header animate-pulse motion-reduce:animate-none" />
+            <div className="h-8 w-20 rounded bg-surface-header animate-pulse motion-reduce:animate-none" />
+            <div className="ml-auto h-8 w-48 rounded bg-surface-header animate-pulse motion-reduce:animate-none" />
           </div>
         </div>
 
@@ -405,15 +405,15 @@ export default function App() {
           {/* Mobile: sort bar + cards */}
           <div className="md:hidden flex flex-col flex-1 overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/30 flex-shrink-0">
-              <div className="h-3.5 w-10 rounded bg-surface-header animate-pulse shrink-0" />
-              <div className="h-8 flex-1 rounded bg-surface-header animate-pulse" />
-              <div className="h-8 w-8 rounded bg-surface-header animate-pulse shrink-0" />
+              <div className="h-3.5 w-10 rounded bg-surface-header animate-pulse motion-reduce:animate-none shrink-0" />
+              <div className="h-8 flex-1 rounded bg-surface-header animate-pulse motion-reduce:animate-none" />
+              <div className="h-8 w-8 rounded bg-surface-header animate-pulse motion-reduce:animate-none shrink-0" />
             </div>
             <div className="flex-1 overflow-hidden">
               {Array.from({ length: 7 }).map((_, i) => (
                 <div
                   key={i}
-                  className="border-b px-3 py-2.5 animate-pulse"
+                  className="border-b px-3 py-2.5 animate-pulse motion-reduce:animate-none"
                   style={{ animationDelay: `${i * 60}ms` }}
                 >
                   <div className="flex items-start justify-between gap-2">
@@ -442,7 +442,7 @@ export default function App() {
             {Array.from({ length: 8 }).map((_, i) => (
               <div
                 key={i}
-                className="flex items-center gap-4 px-4 border-b border-border animate-pulse"
+                className="flex items-center gap-4 px-4 border-b border-border animate-pulse motion-reduce:animate-none"
                 style={{ height: '41px', animationDelay: `${i * 60}ms` }}
               >
                 <div className="h-3.5 w-6 rounded bg-surface-header flex-shrink-0" />

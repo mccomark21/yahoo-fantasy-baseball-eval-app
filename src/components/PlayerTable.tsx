@@ -666,7 +666,7 @@ export function PlayerTable({ data, isLoading, showMetricSparklines }: PlayerTab
                 {headerGroup.headers.map((header) => (
                   <TableHead
                     key={header.id}
-                    className="cursor-pointer select-none sticky top-0 bg-background z-10"
+                    className="cursor-pointer select-none"
                     onClick={header.column.getToggleSortingHandler()}
                   >
                     <div className="flex items-center gap-1">

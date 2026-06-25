@@ -123,6 +123,7 @@
     --accent:               oklch(0.230 0.048 263);
     --accent-foreground:    oklch(1 0 0);
     --destructive:          oklch(0.580 0.200 18);
+    --surface-header:       oklch(0.230 0.048 263); /* navy-tinted header band, lighter than navy-ink rows */
     --border:               oklch(1 0 0 / 12%);
     --input:                oklch(1 0 0 / 15%);
     --ring:                 var(--navy-mid);

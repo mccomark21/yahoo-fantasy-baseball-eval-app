@@ -112,7 +112,7 @@ export function FilterBar({
       {/* Filter content — collapsible on mobile, always visible on desktop */}
       <div
         id="filterbar-panel"
-        className={`grid transition-[grid-template-rows] duration-200 ease-out md:!grid-rows-[1fr] ${
+        className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none md:!grid-rows-[1fr] ${
           isMobile ? (isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]') : 'grid-rows-[1fr]'
         }`}
       >
