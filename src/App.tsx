@@ -379,7 +379,7 @@ export default function App() {
             </div>
             <div className="flex gap-0.5">
               {[72, 82, 82, 66, 82].map((w, i) => (
-                <div key={i} className="h-11 sm:h-9 rounded-sm bg-white/20 animate-pulse flex-shrink-0" style={{ width: `${w}px` }} />
+                <div key={i} className="h-11 md:h-9 rounded-sm bg-white/20 animate-pulse flex-shrink-0" style={{ width: `${w}px` }} />
               ))}
             </div>
           </div>

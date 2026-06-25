@@ -59,7 +59,7 @@ export function NavTabs({ value, onChange, contentRef }: NavTabsProps) {
               }}
               onKeyDown={(e) => handleKeyDown(e, idx)}
               className={[
-                'h-11 sm:h-9 px-3.5 text-sm font-semibold whitespace-nowrap transition-colors duration-100 flex-shrink-0',
+                'h-11 md:h-9 px-3.5 text-sm font-semibold whitespace-nowrap transition-colors duration-100 flex-shrink-0',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 rounded-sm',
                 isActive
                   ? 'text-white border-b-2 border-mlb-red'

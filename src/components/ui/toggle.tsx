@@ -15,10 +15,12 @@ const toggleVariants = cva(
         nav: "bg-transparent text-white/70 hover:bg-white/10 hover:text-white/90 aria-pressed:bg-transparent aria-pressed:text-white aria-pressed:border-b-2 aria-pressed:border-mlb-red data-[state=on]:bg-transparent data-[state=on]:text-white data-[state=on]:border-b-2 data-[state=on]:border-mlb-red transition-colors duration-100",
       },
       size: {
+        // Mobile (< md) enforces the 44px minimum touch target (WCAG 2.5.8);
+        // desktop restores the denser pointer-precision heights at md.
         default:
-          "h-8 min-w-8 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-        sm: "h-7 min-w-7 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
-        lg: "h-9 min-w-9 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+          "h-11 min-w-11 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 md:h-8 md:min-w-8",
+        sm: "h-11 min-w-11 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5 md:h-7 md:min-w-7",
+        lg: "h-11 min-w-11 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 md:h-9 md:min-w-9",
       },
     },
     defaultVariants: {

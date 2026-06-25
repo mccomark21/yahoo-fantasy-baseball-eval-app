@@ -318,6 +318,80 @@ interface PlayerTableProps {
   showMetricSparklines: boolean;
 }
 
+/**
+ * Per-table loading skeleton shown on re-queries and tab switches.
+ * Mirrors the app-level first-load skeleton vocabulary (bg-surface-header for
+ * primary shapes, bg-surface for secondary, animate-pulse + i*60ms stagger) and
+ * the real table's outer structure so the swap to data causes no layout shift.
+ */
+function TableSkeletonDesktop() {
+  return (
+    <div className="flex min-h-0 flex-col flex-1 overflow-hidden" aria-hidden="true">
+      <div className="min-h-0 overflow-hidden flex-1">
+        <div className="bg-surface-header border-b border-border h-9" />
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex items-center gap-4 px-4 border-b border-border animate-pulse motion-reduce:animate-none"
+            style={{ height: '41px', animationDelay: `${i * 60}ms` }}
+          >
+            <div className="h-3.5 w-6 rounded bg-surface-header flex-shrink-0" />
+            <div className="h-3.5 rounded bg-surface" style={{ width: `${100 + (i % 3) * 36}px` }} />
+            <div className="h-3.5 w-14 rounded bg-surface" />
+            <div className="h-3.5 w-12 rounded bg-surface ml-auto" />
+            <div className="h-3.5 w-12 rounded bg-surface" />
+            <div className="h-3.5 w-12 rounded bg-surface" />
+            <div className="h-3.5 w-10 rounded bg-surface" />
+          </div>
+        ))}
+      </div>
+      <div className="border-t px-4 py-2 text-sm text-muted-foreground">
+        <div className="h-4 w-28 rounded bg-surface animate-pulse motion-reduce:animate-none" />
+      </div>
+    </div>
+  );
+}
+
+function TableSkeletonMobile() {
+  return (
+    <div className="flex min-h-0 flex-col flex-1 overflow-hidden" aria-hidden="true">
+      <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/30 flex-shrink-0">
+        <div className="h-3.5 w-10 rounded bg-surface-header animate-pulse motion-reduce:animate-none shrink-0" />
+        <div className="h-8 flex-1 rounded bg-surface-header animate-pulse motion-reduce:animate-none" />
+        <div className="h-8 w-8 rounded bg-surface-header animate-pulse motion-reduce:animate-none shrink-0" />
+      </div>
+      <div className="min-h-0 overflow-hidden flex-1">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <div
+            key={i}
+            className="border-b px-3 py-2.5 animate-pulse motion-reduce:animate-none"
+            style={{ animationDelay: `${i * 60}ms` }}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                <div className="h-4 rounded bg-surface-header" style={{ width: `${120 + (i % 3) * 32}px` }} />
+                <div className="h-3 w-40 rounded bg-surface" />
+              </div>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                <div className="h-4 w-12 rounded bg-surface-header" />
+                <div className="h-2.5 w-14 rounded bg-surface" />
+              </div>
+            </div>
+            <div className="flex gap-1 mt-2">
+              {[44, 52, 44, 32, 52].map((w, j) => (
+                <div key={j} className="h-5 rounded bg-surface" style={{ width: `${w}px` }} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="border-t px-3 py-2 text-sm text-muted-foreground pb-[env(safe-area-inset-bottom,0px)]">
+        <div className="h-4 w-28 rounded bg-surface animate-pulse motion-reduce:animate-none" />
+      </div>
+    </div>
+  );
+}
+
 const SORT_OPTIONS = [
   { value: 'composite_score', label: 'Composite' },
   { value: 'z_xwoba', label: 'xwOBA Z' },
@@ -505,9 +579,12 @@ export function PlayerTable({ data, isLoading, showMetricSparklines }: PlayerTab
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center p-12 text-muted-foreground">
-        Loading data...
-      </div>
+      <>
+        <span className="sr-only" role="status" aria-live="polite">
+          Loading player data
+        </span>
+        {isMobile ? <TableSkeletonMobile /> : <TableSkeletonDesktop />}
+      </>
     );
   }
 
