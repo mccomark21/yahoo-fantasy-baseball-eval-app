@@ -27,16 +27,18 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'hitters',
     label: 'Hitters',
     views: [
-      { value: 'hitters', label: 'StatCast' },
+      { value: 'hitters',          label: 'StatCast'  },
+      { value: 'streamer-hitters', label: 'Streamers' },
     ],
   },
   {
     id: 'pitchers',
     label: 'Pitchers',
     views: [
-      { value: 'pitchers',  label: 'SP Rankings' },
-      { value: 'relievers', label: 'RP Rankings' },
-      { value: 'injured',   label: 'Injured'     },
+      { value: 'pitchers',          label: 'SP Rankings' },
+      { value: 'relievers',         label: 'RP Rankings' },
+      { value: 'injured',           label: 'Injured'     },
+      { value: 'streamer-pitchers', label: 'Streamers'   },
     ],
   },
   {

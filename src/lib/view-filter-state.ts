@@ -30,6 +30,16 @@ export interface InjuredFilters {
   selectedTeams: string[];
 }
 
+export interface StreamerHitterFilters {
+  readonly mode: 'streamer-hitters';
+  selectedTeams: string[];
+}
+
+export interface StreamerPitcherFilters {
+  readonly mode: 'streamer-pitchers';
+  selectedTeams: string[];
+}
+
 export interface ProspectFilters {
   readonly mode: 'prospects';
   selectedTeams: string[];
@@ -44,6 +54,8 @@ export type ViewFilters =
   | PitcherFilters
   | ReliefFilters
   | InjuredFilters
+  | StreamerHitterFilters
+  | StreamerPitcherFilters
   | ProspectFilters;
 
 export function defaultHitterFilters(): HitterFilters {
@@ -60,6 +72,14 @@ export function defaultReliefFilters(): ReliefFilters {
 
 export function defaultInjuredFilters(): InjuredFilters {
   return { mode: 'injured', selectedTeams: [] };
+}
+
+export function defaultStreamerHitterFilters(): StreamerHitterFilters {
+  return { mode: 'streamer-hitters', selectedTeams: [] };
+}
+
+export function defaultStreamerPitcherFilters(): StreamerPitcherFilters {
+  return { mode: 'streamer-pitchers', selectedTeams: [] };
 }
 
 export function defaultProspectFilters(): ProspectFilters {

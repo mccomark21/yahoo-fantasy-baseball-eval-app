@@ -16,15 +16,28 @@ import {
   type ReliefScoringMode,
 } from './pitcherlist-client';
 import {
+  queryCbsStreamer,
   queryInjuredPitchers,
   queryPitcherTrends,
   queryReliefTrends,
   type InjuredPitcherTrendRow,
   type PitcherTrendRow,
   type ReliefTrendRow,
+  type StreamerViewRow,
 } from './queries';
+import {
+  fetchLatestCbsStreamer,
+  type CbsStreamerLatestResponse,
+} from './cbs-streamer-client';
 
-export type ViewMode = 'hitters' | 'pitchers' | 'relievers' | 'injured' | 'prospects';
+export type ViewMode =
+  | 'hitters'
+  | 'pitchers'
+  | 'relievers'
+  | 'injured'
+  | 'prospects'
+  | 'streamer-hitters'
+  | 'streamer-pitchers';
 
 // ---------------------------------------------------------------------------
 // Metadata types — the shape of banner information each ranking view exposes
@@ -49,6 +62,16 @@ export interface InjuredViewMeta {
   scraped_at: string;
 }
 
+export interface StreamerViewMeta {
+  title: string;
+  source_url: string;
+  published_at: string | null;
+  scraped_at: string;
+  week_label: string | null;
+  week_start: string | null;
+  week_end: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Input types — what each ranking view needs to run its query
 // ---------------------------------------------------------------------------
@@ -67,6 +90,12 @@ export interface ReliefViewInput {
 }
 
 export interface InjuredViewInput {
+  selectedLeague: string | null;
+  selectedTeams: string[];
+  playerSearch: string;
+}
+
+export interface StreamerViewInput {
   selectedLeague: string | null;
   selectedTeams: string[];
   playerSearch: string;
@@ -197,6 +226,42 @@ export function makeInjuredViewExecute(
   };
 }
 
+export interface StreamerViewDeps {
+  fetchLatest: () => Promise<CbsStreamerLatestResponse>;
+  queryRows: (
+    rows: CbsStreamerLatestResponse['rows'],
+    league: string | null,
+    teams: string[],
+    search: string | undefined,
+  ) => Promise<StreamerViewRow[]>;
+}
+
+export function makeStreamerViewExecute(
+  deps: StreamerViewDeps,
+): (input: StreamerViewInput) => Promise<{ rows: StreamerViewRow[]; meta: StreamerViewMeta }> {
+  return async (input) => {
+    const latest = await deps.fetchLatest();
+    const rows = await deps.queryRows(
+      latest.rows,
+      input.selectedLeague,
+      input.selectedTeams,
+      input.playerSearch || undefined,
+    );
+    return {
+      rows,
+      meta: {
+        title: latest.title,
+        source_url: latest.source_url,
+        published_at: latest.published_at,
+        scraped_at: latest.scraped_at,
+        week_label: latest.week_label,
+        week_start: latest.week_start,
+        week_end: latest.week_end,
+      },
+    };
+  };
+}
+
 // Production execute functions wired to real adapters.
 const defaultPitcherViewExecute = makePitcherViewExecute({
   fetchLatest: fetchLatestPitcherList,
@@ -213,6 +278,16 @@ const defaultReliefViewExecute = makeReliefViewExecute({
 const defaultInjuredViewExecute = makeInjuredViewExecute({
   fetchLatest: fetchLatestInjuredPitchers,
   queryTrends: queryInjuredPitchers,
+});
+
+const defaultStreamerHittersExecute = makeStreamerViewExecute({
+  fetchLatest: () => fetchLatestCbsStreamer('hitters'),
+  queryRows: queryCbsStreamer,
+});
+
+const defaultStreamerPitchersExecute = makeStreamerViewExecute({
+  fetchLatest: () => fetchLatestCbsStreamer('pitchers'),
+  queryRows: queryCbsStreamer,
 });
 
 // ---------------------------------------------------------------------------
@@ -234,18 +309,26 @@ export interface RankingViewsInput {
   pitcher: PitcherViewInput;
   relief: ReliefViewInput;
   injured: InjuredViewInput;
+  streamerHitters: StreamerViewInput;
+  streamerPitchers: StreamerViewInput;
   /** Override for testing only. */
   pitcherExecute?: (input: PitcherViewInput) => Promise<{ rows: PitcherTrendRow[]; meta: PitcherViewMeta }>;
   /** Override for testing only. */
   reliefExecute?: (input: ReliefViewInput) => Promise<{ rows: ReliefTrendRow[]; meta: ReliefViewMeta }>;
   /** Override for testing only. */
   injuredExecute?: (input: InjuredViewInput) => Promise<{ rows: InjuredPitcherTrendRow[]; meta: InjuredViewMeta }>;
+  /** Override for testing only. */
+  streamerHittersExecute?: (input: StreamerViewInput) => Promise<{ rows: StreamerViewRow[]; meta: StreamerViewMeta }>;
+  /** Override for testing only. */
+  streamerPitchersExecute?: (input: StreamerViewInput) => Promise<{ rows: StreamerViewRow[]; meta: StreamerViewMeta }>;
 }
 
 export interface RankingViewsState {
   pitcher: RankingViewState<PitcherTrendRow, PitcherViewMeta>;
   relief: RankingViewState<ReliefTrendRow, ReliefViewMeta>;
   injured: RankingViewState<InjuredPitcherTrendRow, InjuredViewMeta>;
+  streamerHitters: RankingViewState<StreamerViewRow, StreamerViewMeta>;
+  streamerPitchers: RankingViewState<StreamerViewRow, StreamerViewMeta>;
 }
 
 const EMPTY_PITCHER_STATE: RankingViewState<PitcherTrendRow, PitcherViewMeta> = {
@@ -269,15 +352,26 @@ const EMPTY_INJURED_STATE: RankingViewState<InjuredPitcherTrendRow, InjuredViewM
   meta: null,
 };
 
+const EMPTY_STREAMER_STATE: RankingViewState<StreamerViewRow, StreamerViewMeta> = {
+  rows: [],
+  isLoading: false,
+  error: null,
+  meta: null,
+};
+
 export function useRankingViews({
   isReady,
   viewMode,
   pitcher,
   relief,
   injured,
+  streamerHitters,
+  streamerPitchers,
   pitcherExecute = defaultPitcherViewExecute,
   reliefExecute = defaultReliefViewExecute,
   injuredExecute = defaultInjuredViewExecute,
+  streamerHittersExecute = defaultStreamerHittersExecute,
+  streamerPitchersExecute = defaultStreamerPitchersExecute,
 }: RankingViewsInput): RankingViewsState {
   const [pitcherState, setPitcherState] =
     useState<RankingViewState<PitcherTrendRow, PitcherViewMeta>>(EMPTY_PITCHER_STATE);
@@ -285,6 +379,10 @@ export function useRankingViews({
     useState<RankingViewState<ReliefTrendRow, ReliefViewMeta>>(EMPTY_RELIEF_STATE);
   const [injuredState, setInjuredState] =
     useState<RankingViewState<InjuredPitcherTrendRow, InjuredViewMeta>>(EMPTY_INJURED_STATE);
+  const [streamerHittersState, setStreamerHittersState] =
+    useState<RankingViewState<StreamerViewRow, StreamerViewMeta>>(EMPTY_STREAMER_STATE);
+  const [streamerPitchersState, setStreamerPitchersState] =
+    useState<RankingViewState<StreamerViewRow, StreamerViewMeta>>(EMPTY_STREAMER_STATE);
 
   const runPitcher = useCallback(
     async (input: PitcherViewInput) => {
@@ -340,6 +438,42 @@ export function useRankingViews({
     [injuredExecute],
   );
 
+  const runStreamerHitters = useCallback(
+    async (input: StreamerViewInput) => {
+      setStreamerHittersState((prev) => ({ ...prev, isLoading: true, error: null }));
+      try {
+        const { rows, meta } = await streamerHittersExecute(input);
+        setStreamerHittersState({ rows, isLoading: false, error: null, meta });
+      } catch (err) {
+        setStreamerHittersState({
+          rows: [],
+          isLoading: false,
+          error: err instanceof Error ? err.message : String(err),
+          meta: null,
+        });
+      }
+    },
+    [streamerHittersExecute],
+  );
+
+  const runStreamerPitchers = useCallback(
+    async (input: StreamerViewInput) => {
+      setStreamerPitchersState((prev) => ({ ...prev, isLoading: true, error: null }));
+      try {
+        const { rows, meta } = await streamerPitchersExecute(input);
+        setStreamerPitchersState({ rows, isLoading: false, error: null, meta });
+      } catch (err) {
+        setStreamerPitchersState({
+          rows: [],
+          isLoading: false,
+          error: err instanceof Error ? err.message : String(err),
+          meta: null,
+        });
+      }
+    },
+    [streamerPitchersExecute],
+  );
+
   useEffect(() => {
     if (!isReady) return;
 
@@ -350,18 +484,37 @@ export function useRankingViews({
         void runRelief(relief);
       } else if (viewMode === 'injured') {
         void runInjured(injured);
+      } else if (viewMode === 'streamer-hitters') {
+        void runStreamerHitters(streamerHitters);
+      } else if (viewMode === 'streamer-pitchers') {
+        void runStreamerPitchers(streamerPitchers);
       }
     }, 100);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isReady, viewMode, pitcher, relief, injured, runPitcher, runRelief, runInjured]);
+  }, [
+    isReady,
+    viewMode,
+    pitcher,
+    relief,
+    injured,
+    streamerHitters,
+    streamerPitchers,
+    runPitcher,
+    runRelief,
+    runInjured,
+    runStreamerHitters,
+    runStreamerPitchers,
+  ]);
 
   return {
     pitcher: pitcherState,
     relief: reliefState,
     injured: injuredState,
+    streamerHitters: streamerHittersState,
+    streamerPitchers: streamerPitchersState,
   };
 }
 

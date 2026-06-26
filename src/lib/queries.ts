@@ -10,6 +10,7 @@ import type {
   TrendDirection,
 } from './pitcherlist-client';
 import type { ProspectSourceRow, ProspectSourceStatus } from './prospects-client';
+import type { CbsStreamerRow, StreamerMatchup } from './cbs-streamer-client';
 import {
   applyFantasyTeamAndPlayerSearchFilters,
   applyFantasyTeamFilter,
@@ -121,6 +122,18 @@ export interface InjuredPitcherTrendRow {
   mlb_team: string | null;
   injury_note: string | null;
   source_list: PitcherSourceList;
+  fantasy_team: string | null;
+  league_name: string | null;
+}
+
+export interface StreamerViewRow {
+  player_name: string;
+  mlb_team: string | null;
+  positions: string[];
+  matchups: StreamerMatchup[];
+  games: number;
+  two_start: boolean;
+  blurb: string | null;
   fantasy_team: string | null;
   league_name: string | null;
 }
@@ -1696,6 +1709,52 @@ export async function queryInjuredPitchers(
       if (aRank !== bRank) {
         return aRank - bRank;
       }
+      return a.player_name.localeCompare(b.player_name);
+    });
+  } finally {
+    await conn.close();
+  }
+}
+
+export async function queryCbsStreamer(
+  rows: CbsStreamerRow[],
+  selectedLeague: string | null,
+  selectedFantasyTeams: string[],
+  playerNameSearch?: string
+): Promise<StreamerViewRow[]> {
+  const db = await getDB();
+  const conn = await db.connect();
+
+  try {
+    const ownerByNormName = await loadOwnershipByNormName(conn, selectedLeague);
+
+    const joined = rows.map((row) => {
+      const ownership = ownerByNormName.get(normalizePlayerName(row.player_name));
+      return {
+        player_name: row.player_name,
+        mlb_team: row.mlb_team,
+        positions: row.positions,
+        matchups: row.matchups,
+        games: row.games,
+        two_start: row.two_start,
+        blurb: row.blurb,
+        fantasy_team: ownership?.fantasy_team ?? null,
+        league_name: ownership?.league_name ?? null,
+      } satisfies StreamerViewRow;
+    });
+
+    const filtered = applyFantasyTeamAndPlayerSearchFilters(
+      joined,
+      selectedFantasyTeams,
+      playerNameSearch,
+      normalizePlayerName
+    );
+
+    // Two-start arms first (a streaming manager's priority), then the players
+    // with the most games this week, then alphabetically for a stable order.
+    return filtered.sort((a, b) => {
+      if (a.two_start !== b.two_start) return a.two_start ? -1 : 1;
+      if (a.games !== b.games) return b.games - a.games;
       return a.player_name.localeCompare(b.player_name);
     });
   } finally {

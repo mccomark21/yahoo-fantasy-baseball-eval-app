@@ -25,7 +25,7 @@ const HISTORY_BACKFILL_TARGET = 8
 
 type ReliefScoringMode = 'svhld' | 'saves'
 type ProspectSourceName = 'mlb' | 'fangraphs' | 'prospects_live' | 'fantrax' | 'pitcherlist' | 'tjstats'
-type SnapshotRefreshTarget = 'all' | 'pitcher' | 'relief'
+type SnapshotRefreshTarget = 'all' | 'pitcher' | 'relief' | 'cbs'
 type PitcherSourceList = 'SP' | 'RP'
 
 type TrendDirection = 'up' | 'down' | 'flat' | 'new' | 'unknown'
@@ -866,7 +866,12 @@ async function fetchHtmlWithRetry(url: string): Promise<string> {
 
 function normalizeSnapshotRefreshTarget(value: string | undefined): SnapshotRefreshTarget {
   const normalized = value?.trim().toLowerCase()
-  if (normalized === 'pitcher' || normalized === 'relief' || normalized === 'all') {
+  if (
+    normalized === 'pitcher' ||
+    normalized === 'relief' ||
+    normalized === 'cbs' ||
+    normalized === 'all'
+  ) {
     return normalized
   }
   return 'all'
@@ -1737,6 +1742,431 @@ async function fetchLatestProspects(): Promise<ProspectsLatestResponse> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// CBS Streamer feeds (issues #19 & #20)
+//
+// CBS Sports publishes a weekly "Top N sleeper hitters/pitchers" column. Each
+// player renders as a PlayerObjectV4 widget carrying name, position, MLB team,
+// and a Matchup(s) cell ("@DET3, @BOS4" for hitters; "at SD" / "vs. ARI, vs.
+// MIA" for pitchers). We parse those, then enrich each matchup with the actual
+// game date from the MLB Stats API schedule for the streaming week so the view
+// can answer "who do I stream, against whom, on which day".
+// ---------------------------------------------------------------------------
+
+// The /fantasy/baseball/ landing page links the current week's sleeper columns;
+// the bare /news/ index 404s, so discover the latest article from the landing.
+const CBS_FANTASY_NEWS_URL = 'https://www.cbssports.com/fantasy/baseball/'
+const CBS_BASE_URL = 'https://www.cbssports.com'
+const CBS_STREAMER_HITTERS_SLUG = /top-\d+-sleeper-hitters?/i
+const CBS_STREAMER_PITCHERS_SLUG = /top-\d+-sleeper-pitchers?/i
+const MLB_STATS_TEAMS_URL = 'https://statsapi.mlb.com/api/v1/teams?sportId=1'
+const MLB_STATS_SCHEDULE_URL = 'https://statsapi.mlb.com/api/v1/schedule?sportId=1'
+
+type StreamerKind = 'hitters' | 'pitchers'
+
+interface StreamerMatchup {
+  // Calendar date of the game ('YYYY-MM-DD'), or null when the schedule lookup
+  // could not place it (e.g. probable-pitcher start not yet on the schedule).
+  date: string | null
+  opponent: string
+  home: boolean
+}
+
+interface CbsStreamerRow {
+  player_name: string
+  mlb_team: string | null
+  positions: string[]
+  matchups: StreamerMatchup[]
+  games: number
+  two_start: boolean
+  blurb: string | null
+}
+
+interface CbsStreamerLatestResponse {
+  kind: StreamerKind
+  title: string
+  source_url: string
+  published_at: string | null
+  scraped_at: string
+  week_label: string | null
+  week_start: string | null
+  week_end: string | null
+  rows: CbsStreamerRow[]
+}
+
+// CBS / MLB-API abbreviation reconciliation. We canonicalise to MLB Stats API
+// abbreviations so a CBS opponent token matches a schedule entry. Unknown codes
+// pass through unchanged (a missed match only costs a date, never the row).
+const TEAM_ABBR_ALIAS: Record<string, string> = {
+  WAS: 'WSH', WSN: 'WSH', ARI: 'AZ', CHW: 'CWS', SDP: 'SD', SFG: 'SF',
+  TBR: 'TB', KCR: 'KC', NYY: 'NYY', NYM: 'NYM', OAK: 'ATH', ATH: 'ATH',
+}
+
+function canonicalTeamAbbr(abbr: string): string {
+  const up = normalizeWhitespace(abbr).toUpperCase().replace(/[^A-Z]/g, '')
+  if (!up) return ''
+  return TEAM_ABBR_ALIAS[up] ?? up
+}
+
+// Parse a CBS matchup cell into opponent tokens. Hitters: "@DET3, @BOS4" where
+// the leading @ marks an away series and the trailing number is the game count.
+// Pitchers: "at SD" / "vs. ARI" — one start per token, "at" marks an away start.
+function parseStreamerMatchupTokens(
+  text: string,
+  kind: StreamerKind
+): Array<{ opponent: string; home: boolean; games: number }> {
+  const cleaned = normalizeWhitespace(text)
+  if (!cleaned) return []
+
+  return cleaned
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map((token) => {
+      if (kind === 'pitchers') {
+        const away = /^at\b/i.test(token)
+        const opponent = canonicalTeamAbbr(token.replace(/^(at|vs\.?)\b/i, ''))
+        if (!opponent) return null
+        return { opponent, home: !away, games: 1 }
+      }
+      const match = token.match(/^(@)?\s*([A-Za-z]{2,4})\s*(\d+)?$/)
+      if (!match) return null
+      const opponent = canonicalTeamAbbr(match[2])
+      if (!opponent) return null
+      return {
+        opponent,
+        home: !match[1],
+        games: match[3] ? Number.parseInt(match[3], 10) : 1,
+      }
+    })
+    .filter((entry): entry is { opponent: string; home: boolean; games: number } => entry != null)
+}
+
+function extractJsonLdDatePublished($: ReturnType<typeof load>): string | null {
+  let published: string | null = null
+  $('script[type="application/ld+json"]').each((_i, el) => {
+    if (published) return
+    const raw = $(el).contents().text()
+    if (!raw) return
+    try {
+      const parsed = JSON.parse(raw)
+      const nodes = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.['@graph'])
+          ? parsed['@graph']
+          : [parsed]
+      for (const node of nodes) {
+        if (node && typeof node.datePublished === 'string') {
+          published = node.datePublished
+          return
+        }
+      }
+    } catch {
+      // Non-JSON ld+json block — ignore.
+    }
+  })
+  return published
+}
+
+function extractWeekLabel(title: string): string | null {
+  const match = title.match(/week\s+(\d+)/i)
+  return match ? `Week ${match[1]}` : null
+}
+
+// The fantasy streaming week is the Monday–Sunday window of the ISO week that
+// contains the article's publish date (CBS posts the preview on the Monday).
+export function deriveStreamerWeek(
+  publishedAt: string | null
+): { weekStart: string; weekEnd: string } | null {
+  if (!publishedAt) return null
+  const published = new Date(publishedAt)
+  if (Number.isNaN(published.getTime())) return null
+
+  const day = published.getUTCDay() // 0 = Sunday … 6 = Saturday
+  const offsetToMonday = day === 0 ? -6 : 1 - day
+  const monday = new Date(
+    Date.UTC(published.getUTCFullYear(), published.getUTCMonth(), published.getUTCDate() + offsetToMonday)
+  )
+  const sunday = new Date(
+    Date.UTC(monday.getUTCFullYear(), monday.getUTCMonth(), monday.getUTCDate() + 6)
+  )
+  const toIsoDate = (value: Date) => value.toISOString().slice(0, 10)
+  return { weekStart: toIsoDate(monday), weekEnd: toIsoDate(sunday) }
+}
+
+export function parseCbsStreamerArticle(
+  articleUrl: string,
+  html: string,
+  kind: StreamerKind
+): CbsStreamerLatestResponse {
+  const $ = load(html)
+  const rows: CbsStreamerRow[] = []
+
+  $('.PlayerObjectV4').each((_i, el) => {
+    const node = $(el)
+    const playerName = cleanPlayerName(
+      normalizeWhitespace(node.find('.PlayerObjectV4-playerName .PlayerName').first().text())
+    )
+    if (!playerName) return
+
+    const positionsRaw = normalizeWhitespace(node.find('.PlayerObjectV4-playerPosition').first().text())
+    const positions = positionsRaw ? splitPositions(positionsRaw) : []
+
+    const teamRaw = normalizeWhitespace(node.find('.PlayerObjectV4-playerInfoName--short').first().text())
+    const team = teamRaw ? canonicalTeamAbbr(teamRaw) : null
+
+    let matchupText = ''
+    node.find('.PlayerObjectV4-tableCell').each((_j, cell) => {
+      const cellNode = $(cell)
+      const label = normalizeWhitespace(cellNode.find('.PlayerObjectV4-label').first().text())
+      if (/^matchups?$/i.test(label)) {
+        matchupText = normalizeWhitespace(
+          cellNode.clone().find('.PlayerObjectV4-label').remove().end().text()
+        )
+      }
+    })
+
+    const tokens = parseStreamerMatchupTokens(matchupText, kind)
+    // Expand each token into one matchup per game so the view can list every
+    // game with its own date (a 3-game series becomes three dated entries).
+    const matchups: StreamerMatchup[] = tokens.flatMap((token) =>
+      Array.from({ length: Math.max(1, token.games) }, () => ({
+        date: null as string | null,
+        opponent: token.opponent,
+        home: token.home,
+      }))
+    )
+
+    // The analyst's per-player writeup (repairMojibake fixes CBS's stray bytes).
+    const blurbRaw = normalizeWhitespace(node.find('.PlayerObjectV4-analysis').first().text())
+    const blurb = blurbRaw ? repairMojibake(blurbRaw) : null
+
+    rows.push({
+      player_name: playerName,
+      mlb_team: team || null,
+      positions,
+      matchups,
+      games: matchups.length,
+      two_start: kind === 'pitchers' && tokens.length >= 2,
+      blurb,
+    })
+  })
+
+  if (rows.length === 0) {
+    throw new Error(`CBS streamer parse produced zero players for ${articleUrl}`)
+  }
+
+  const title = normalizeWhitespace($('h1').first().text()) || `CBS Streamer ${kind}`
+  const publishedAt = extractJsonLdDatePublished($) ?? $('time[datetime]').first().attr('datetime') ?? null
+  const week = deriveStreamerWeek(publishedAt)
+
+  return {
+    kind,
+    title,
+    source_url: articleUrl,
+    published_at: publishedAt,
+    scraped_at: new Date().toISOString(),
+    week_label: extractWeekLabel(title),
+    week_start: week?.weekStart ?? null,
+    week_end: week?.weekEnd ?? null,
+    rows,
+  }
+}
+
+interface ScheduleGame {
+  date: string
+  home: string
+  away: string
+}
+
+// Pure: attach calendar dates to each matchup by matching the player's team and
+// the CBS opponent against the week schedule, consuming each game once so a
+// multi-game series spreads across its distinct dates.
+export function enrichStreamerMatchupDates(
+  rows: CbsStreamerRow[],
+  gamesByTeam: Map<string, ScheduleGame[]>
+): CbsStreamerRow[] {
+  return rows.map((row) => {
+    if (!row.mlb_team) return row
+    const games = gamesByTeam.get(row.mlb_team) ?? []
+    if (games.length === 0) return row
+
+    const usedDates = new Set<string>()
+    const matchups = row.matchups.map((matchup) => {
+      const game = games.find((candidate) => {
+        if (usedDates.has(candidate.date)) return false
+        const isHomeGame = candidate.home === row.mlb_team && candidate.away === matchup.opponent
+        const isAwayGame = candidate.away === row.mlb_team && candidate.home === matchup.opponent
+        return matchup.home ? isHomeGame : isAwayGame
+      })
+      if (!game) return matchup
+      usedDates.add(game.date)
+      return { ...matchup, date: game.date }
+    })
+
+    return { ...row, matchups }
+  })
+}
+
+async function fetchJsonResource<T>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    headers: {
+      'user-agent': 'Mozilla/5.0 (compatible; yahoo-fantasy-eval-app/1.0)',
+      accept: 'application/json',
+    },
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url} (${response.status})`)
+  }
+  return (await response.json()) as T
+}
+
+async function fetchMlbWeekSchedule(weekStart: string, weekEnd: string): Promise<Map<string, ScheduleGame[]>> {
+  const idToAbbr = new Map<number, string>()
+  try {
+    const teamsPayload = await fetchJsonResource<{ teams?: Array<{ id?: number; abbreviation?: string }> }>(
+      MLB_STATS_TEAMS_URL
+    )
+    for (const team of teamsPayload.teams ?? []) {
+      if (team.id && team.abbreviation) {
+        idToAbbr.set(team.id, canonicalTeamAbbr(team.abbreviation))
+      }
+    }
+  } catch (error) {
+    console.warn(`[cbs-streamer] team lookup failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  const scheduleUrl = `${MLB_STATS_SCHEDULE_URL}&startDate=${weekStart}&endDate=${weekEnd}`
+  const schedulePayload = await fetchJsonResource<{
+    dates?: Array<{
+      games?: Array<{
+        officialDate?: string
+        gameDate?: string
+        teams?: {
+          home?: { team?: { id?: number; abbreviation?: string } }
+          away?: { team?: { id?: number; abbreviation?: string } }
+        }
+      }>
+    }>
+  }>(scheduleUrl)
+
+  const resolveAbbr = (team?: { id?: number; abbreviation?: string }): string => {
+    if (!team) return ''
+    if (team.id != null && idToAbbr.has(team.id)) return idToAbbr.get(team.id) as string
+    return team.abbreviation ? canonicalTeamAbbr(team.abbreviation) : ''
+  }
+
+  const byTeam = new Map<string, ScheduleGame[]>()
+  for (const day of schedulePayload.dates ?? []) {
+    for (const game of day.games ?? []) {
+      const home = resolveAbbr(game.teams?.home?.team)
+      const away = resolveAbbr(game.teams?.away?.team)
+      const date = game.officialDate ?? game.gameDate?.slice(0, 10) ?? ''
+      if (!home || !away || !date) continue
+      // The schedule endpoint occasionally returns a rescheduled game outside the
+      // requested window; never let a matchup date escape the streaming week.
+      if (date < weekStart || date > weekEnd) continue
+      const entry: ScheduleGame = { date, home, away }
+      for (const team of [home, away]) {
+        const list = byTeam.get(team) ?? []
+        list.push(entry)
+        byTeam.set(team, list)
+      }
+    }
+  }
+  for (const list of byTeam.values()) {
+    list.sort((a, b) => a.date.localeCompare(b.date))
+  }
+  return byTeam
+}
+
+function extractCbsLatestArticleUrl(newsHtml: string, slug: RegExp, errorMessage: string): string {
+  const $ = load(newsHtml)
+  const seen = new Set<string>()
+  let match: string | null = null
+  $('a[href]').each((_i, el) => {
+    if (match) return
+    const href = $(el).attr('href') ?? ''
+    if (!href || !slug.test(href) || !/\/fantasy\/baseball\/news\//i.test(href)) return
+    if (seen.has(href)) return
+    seen.add(href)
+    match = href.startsWith('http') ? href : `${CBS_BASE_URL}${href.startsWith('/') ? '' : '/'}${href}`
+  })
+  if (!match) {
+    throw new Error(errorMessage)
+  }
+  return match
+}
+
+async function fetchLatestCbsStreamer(kind: StreamerKind): Promise<CbsStreamerLatestResponse> {
+  const slug = kind === 'hitters' ? CBS_STREAMER_HITTERS_SLUG : CBS_STREAMER_PITCHERS_SLUG
+  const newsHtml = await fetchHtmlWithRetry(CBS_FANTASY_NEWS_URL)
+  const articleUrl = extractCbsLatestArticleUrl(
+    newsHtml,
+    slug,
+    `Unable to find latest CBS streamer ${kind} article URL`
+  )
+  console.log(`[cbs-streamer] selected ${kind} article URL: ${articleUrl}`)
+  const articleHtml = await fetchHtmlWithRetry(articleUrl)
+  const parsed = parseCbsStreamerArticle(articleUrl, articleHtml, kind)
+
+  if (parsed.week_start && parsed.week_end) {
+    try {
+      const schedule = await fetchMlbWeekSchedule(parsed.week_start, parsed.week_end)
+      parsed.rows = enrichStreamerMatchupDates(parsed.rows, schedule)
+    } catch (error) {
+      console.warn(
+        `[cbs-streamer] schedule enrichment failed for ${kind}: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  }
+
+  return parsed
+}
+
+function cbsStreamerApiPlugin(): Plugin {
+  const routes: Record<string, StreamerKind> = {
+    '/api/cbs-streamer-hitters/latest': 'hitters',
+    '/api/cbs-streamer-pitchers/latest': 'pitchers',
+  }
+
+  const middleware = async (req: { url?: string }, res: { setHeader: (name: string, value: string) => void; statusCode: number; end: (body?: string) => void }) => {
+    if (!req.url) return
+    const requestPath = new URL(req.url, 'http://localhost').pathname
+    const kind = routes[requestPath]
+    if (!kind) return
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    try {
+      const payload = await fetchLatestCbsStreamer(kind)
+      res.statusCode = 200
+      res.end(JSON.stringify(payload))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown scraper error'
+      res.statusCode = 500
+      res.end(JSON.stringify({ error: 'cbs_streamer_scrape_failed', message }))
+    }
+  }
+
+  return {
+    name: 'cbs-streamer-api',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        middleware(req, res).then(() => {
+          if (!res.writableEnded) next()
+        })
+      })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        middleware(req, res).then(() => {
+          if (!res.writableEnded) next()
+        })
+      })
+    },
+  }
+}
+
 function pitcherListApiPlugin(): Plugin {
   const latestRoute = '/api/pitcher-list/latest'
   const historyRoute = '/api/pitcher-list/history'
@@ -2018,11 +2448,17 @@ function staticApiSnapshotPlugin(): Plugin {
       await mkdir(path.join(outputDir, 'relief-list'), { recursive: true })
       await mkdir(path.join(outputDir, 'prospects'), { recursive: true })
       await mkdir(path.join(outputDir, 'injured-pitchers'), { recursive: true })
+      await mkdir(path.join(outputDir, 'cbs-streamer-hitters'), { recursive: true })
+      await mkdir(path.join(outputDir, 'cbs-streamer-pitchers'), { recursive: true })
 
       const refreshTarget = normalizeSnapshotRefreshTarget(process.env.RANKING_REFRESH_TARGET)
       const refreshPitcher = refreshTarget !== 'relief'
       const refreshRelief = refreshTarget !== 'pitcher'
       const refreshProspects = refreshTarget !== 'relief'
+      // CBS streamer feeds get their own weekly cadence (RANKING_REFRESH_TARGET=cbs);
+      // other targets reuse the deployed snapshot so a Tuesday SP build never blocks
+      // on the more fragile CBS scrape.
+      const refreshCbs = refreshTarget === 'cbs' || refreshTarget === 'all'
 
       console.log(`[snapshot] refresh target: ${refreshTarget}`)
 
@@ -2292,6 +2728,37 @@ function staticApiSnapshotPlugin(): Plugin {
           await writeJsonSnapshot(path.join('prospects', 'latest.json'), prospectsPayload)
         }
       }
+
+      // CBS streamer snapshots. Live scrape is best-effort: on failure we reuse
+      // the deployed snapshot, and if even that is unavailable we skip the write
+      // rather than fail the whole build.
+      const writeCbsStreamerSnapshot = async (kind: StreamerKind): Promise<void> => {
+        const dir = kind === 'hitters' ? 'cbs-streamer-hitters' : 'cbs-streamer-pitchers'
+        const relativePath = path.join(dir, 'latest.json')
+        if (refreshCbs) {
+          try {
+            const payload = await fetchLatestCbsStreamer(kind)
+            await writeJsonSnapshot(relativePath, payload)
+            return
+          } catch (error) {
+            console.warn(
+              `[snapshot] CBS streamer ${kind} live scrape failed, falling back to deployed snapshot: ${error instanceof Error ? error.message : String(error)}`
+            )
+          }
+        }
+        const snapshotUrl = buildProductionSnapshotUrl(`${dir}/latest.json`)
+        try {
+          const payload = await fetchJsonSnapshot<CbsStreamerLatestResponse>(snapshotUrl)
+          await writeJsonSnapshot(relativePath, payload)
+          console.log(`[snapshot] reusing deployed CBS streamer ${kind} snapshot: ${snapshotUrl}`)
+        } catch (error) {
+          console.warn(
+            `[snapshot] no CBS streamer ${kind} snapshot available (${snapshotUrl}): ${error instanceof Error ? error.message : String(error)}`
+          )
+        }
+      }
+      await writeCbsStreamerSnapshot('hitters')
+      await writeCbsStreamerSnapshot('pitchers')
     },
   }
 }
@@ -2305,6 +2772,7 @@ export default defineConfig({
     reliefListApiPlugin(),
     injuredPitchersApiPlugin(),
     prospectsApiPlugin(),
+    cbsStreamerApiPlugin(),
     staticApiSnapshotPlugin(),
   ],
   base: '/yahoo-fantasy-baseball-eval-app/',

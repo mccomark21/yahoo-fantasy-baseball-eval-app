@@ -7,6 +7,8 @@ import type {
   PitcherFilters,
   ProspectFilters,
   ReliefFilters,
+  StreamerHitterFilters,
+  StreamerPitcherFilters,
   ViewFilters,
 } from '@/lib/view-filter-state';
 import {
@@ -65,6 +67,8 @@ export function FilterBar({
   const pf = filters.mode === 'pitchers' ? (filters as PitcherFilters) : null;
   const rf = filters.mode === 'relievers' ? (filters as ReliefFilters) : null;
   const inf = filters.mode === 'injured' ? (filters as InjuredFilters) : null;
+  const shf = filters.mode === 'streamer-hitters' ? (filters as StreamerHitterFilters) : null;
+  const spf = filters.mode === 'streamer-pitchers' ? (filters as StreamerPitcherFilters) : null;
   const prpf = filters.mode === 'prospects' ? (filters as ProspectFilters) : null;
 
   const defaultRosterTeams = useMemo(
@@ -231,8 +235,8 @@ export function FilterBar({
               </div>
             )}
 
-            {/* Fantasy Team multi-select — pitchers / relievers / injured (right-aligned) */}
-            {(pf != null || rf != null || inf != null) && (
+            {/* Fantasy Team multi-select — pitchers / relievers / injured / streamers (right-aligned) */}
+            {(pf != null || rf != null || inf != null || shf != null || spf != null) && (
               <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
                 <label htmlFor="filter-fantasy-team" className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
                 <MultiSelect
@@ -283,6 +287,10 @@ export function FilterBar({
                     : mode === 'relievers'
                       ? 'Reliever Name'
                       : mode === 'injured'
+                        ? 'Pitcher Name'
+                      : mode === 'streamer-hitters'
+                        ? 'Hitter Name'
+                      : mode === 'streamer-pitchers'
                         ? 'Pitcher Name'
                       : 'Prospect Name'}
               </label>

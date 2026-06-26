@@ -17,11 +17,15 @@ import {
   defaultPitcherFilters,
   defaultProspectFilters,
   defaultReliefFilters,
+  defaultStreamerHitterFilters,
+  defaultStreamerPitcherFilters,
   type ViewFilters,
   type HitterFilters,
   type PitcherFilters,
   type ReliefFilters,
   type InjuredFilters,
+  type StreamerHitterFilters,
+  type StreamerPitcherFilters,
   type ProspectFilters,
 } from '@/lib/view-filter-state';
 import { FilterBar } from '@/components/FilterBar';
@@ -29,6 +33,7 @@ import { PlayerTable } from '@/components/PlayerTable';
 import { PitcherTable } from '@/components/PitcherTable';
 import { ReliefPitcherTable } from '@/components/ReliefPitcherTable';
 import { InjuredPitcherTable } from '@/components/InjuredPitcherTable';
+import { StreamerTable } from '@/components/StreamerTable';
 import { ProspectTable } from '@/components/ProspectTable';
 import { type ReliefScoringMode } from '@/lib/pitcherlist-client';
 import { fetchLatestProspects, type ProspectSourceStatus } from '@/lib/prospects-client';
@@ -59,6 +64,19 @@ function getReliefModeForLeague(leagueName: string | null): ReliefScoringMode {
 
   const match = RELIEF_MODE_BY_LEAGUE_NAME.find((entry) => entry.pattern.test(leagueName));
   return match?.mode ?? 'svhld';
+}
+
+// "Jun 22 – 28" / "Jun 30 – Jul 6" from two 'YYYY-MM-DD' strings (rendered UTC
+// so the streaming-week boundary never shifts by the viewer's timezone).
+function formatWeekRange(start: string | null, end: string | null): string | null {
+  if (!start || !end) return null;
+  const startDate = new Date(`${start}T12:00:00Z`);
+  const endDate = new Date(`${end}T12:00:00Z`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return null;
+  const month = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
+  const day = (d: Date) => d.toLocaleDateString('en-US', { day: 'numeric', timeZone: 'UTC' });
+  const tail = month(startDate) === month(endDate) ? day(endDate) : `${month(endDate)} ${day(endDate)}`;
+  return `${month(startDate)} ${day(startDate)} – ${tail}`;
 }
 
 export default function App() {
@@ -97,6 +115,12 @@ export default function App() {
   const [pitcherFilters, setPitcherFilters] = useState<PitcherFilters>(defaultPitcherFilters);
   const [reliefFilters, setReliefFilters] = useState<ReliefFilters>(defaultReliefFilters);
   const [injuredFilters, setInjuredFilters] = useState<InjuredFilters>(defaultInjuredFilters);
+  const [streamerHitterFilters, setStreamerHitterFilters] = useState<StreamerHitterFilters>(
+    defaultStreamerHitterFilters
+  );
+  const [streamerPitcherFilters, setStreamerPitcherFilters] = useState<StreamerPitcherFilters>(
+    defaultStreamerPitcherFilters
+  );
   const [prospectFilters, setProspectFilters] = useState<ProspectFilters>(defaultProspectFilters);
 
   const filtersByMode = useMemo<Record<string, ViewFilters>>(() => ({
@@ -104,8 +128,10 @@ export default function App() {
     pitchers: pitcherFilters,
     relievers: reliefFilters,
     injured: injuredFilters,
+    'streamer-hitters': streamerHitterFilters,
+    'streamer-pitchers': streamerPitcherFilters,
     prospects: prospectFilters,
-  }), [hitterFilters, pitcherFilters, reliefFilters, injuredFilters, prospectFilters]);
+  }), [hitterFilters, pitcherFilters, reliefFilters, injuredFilters, streamerHitterFilters, streamerPitcherFilters, prospectFilters]);
 
   const activeFilters = filtersByMode[viewMode];
 
@@ -115,6 +141,8 @@ export default function App() {
       case 'pitchers': setPitcherFilters(updated as PitcherFilters); break;
       case 'relievers': setReliefFilters(updated as ReliefFilters); break;
       case 'injured': setInjuredFilters(updated as InjuredFilters); break;
+      case 'streamer-hitters': setStreamerHitterFilters(updated as StreamerHitterFilters); break;
+      case 'streamer-pitchers': setStreamerPitcherFilters(updated as StreamerPitcherFilters); break;
       case 'prospects': setProspectFilters(updated as ProspectFilters); break;
     }
   }, []);
@@ -146,6 +174,10 @@ export default function App() {
       // IL spots to fill from the waiver pool, so available stash candidates lead.
       // Users can widen the team filter to surface already-rostered injured arms.
       setInjuredFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
+      // Streamer views default to Free Agent too: streaming is a waiver-wire job,
+      // so available bats/arms lead. Widening the team filter reveals rostered ones.
+      setStreamerHitterFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
+      setStreamerPitcherFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
       setProspectFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
 
       if (defaults.length > 0) {
@@ -248,16 +280,38 @@ export default function App() {
     [selectedLeague, injuredFilters.selectedTeams, playerSearch],
   );
 
+  const streamerHittersInput = useMemo(
+    () => ({
+      selectedLeague,
+      selectedTeams: streamerHitterFilters.selectedTeams,
+      playerSearch,
+    }),
+    [selectedLeague, streamerHitterFilters.selectedTeams, playerSearch],
+  );
+
+  const streamerPitchersInput = useMemo(
+    () => ({
+      selectedLeague,
+      selectedTeams: streamerPitcherFilters.selectedTeams,
+      playerSearch,
+    }),
+    [selectedLeague, streamerPitcherFilters.selectedTeams, playerSearch],
+  );
+
   const {
     pitcher: pitcherView,
     relief: reliefView,
     injured: injuredView,
+    streamerHitters: streamerHittersView,
+    streamerPitchers: streamerPitchersView,
   } = useRankingViews({
     isReady: status === 'ready' && defaultsApplied,
     viewMode,
     pitcher: pitcherInput,
     relief: reliefInput,
     injured: injuredInput,
+    streamerHitters: streamerHittersInput,
+    streamerPitchers: streamerPitchersInput,
   });
 
   const runProspectQuery = useCallback(async () => {
@@ -639,6 +693,64 @@ export default function App() {
             )}
           </div>
           <InjuredPitcherTable data={injuredView.rows} isLoading={injuredView.isLoading} />
+        </>
+      ) : viewMode === 'streamer-hitters' ? (
+        <>
+          <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
+            {streamerHittersView.error ? (
+              <span role="alert" className="text-destructive">Streamer hitters fetch failed: {streamerHittersView.error}</span>
+            ) : streamerHittersView.meta ? (
+              <span>
+                {streamerHittersView.meta.week_label ?? streamerHittersView.meta.title}
+                {(() => {
+                  const range = formatWeekRange(streamerHittersView.meta.week_start, streamerHittersView.meta.week_end);
+                  return range ? ` · ${range}` : '';
+                })()}
+                {' · '}
+                <a
+                  href={streamerHittersView.meta.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Source: ${streamerHittersView.meta.title}`}
+                  className="underline hover:text-navy-mid transition-colors duration-100"
+                >
+                  CBS Source
+                </a>
+              </span>
+            ) : (
+              <span>Loading this week's streaming hitters...</span>
+            )}
+          </div>
+          <StreamerTable kind="hitters" data={streamerHittersView.rows} isLoading={streamerHittersView.isLoading} />
+        </>
+      ) : viewMode === 'streamer-pitchers' ? (
+        <>
+          <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
+            {streamerPitchersView.error ? (
+              <span role="alert" className="text-destructive">Streamer pitchers fetch failed: {streamerPitchersView.error}</span>
+            ) : streamerPitchersView.meta ? (
+              <span>
+                {streamerPitchersView.meta.week_label ?? streamerPitchersView.meta.title}
+                {(() => {
+                  const range = formatWeekRange(streamerPitchersView.meta.week_start, streamerPitchersView.meta.week_end);
+                  return range ? ` · ${range}` : '';
+                })()}
+                {' · '}
+                <a
+                  href={streamerPitchersView.meta.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Source: ${streamerPitchersView.meta.title}`}
+                  className="underline hover:text-navy-mid transition-colors duration-100"
+                >
+                  CBS Source
+                </a>
+              </span>
+            ) : (
+              <span>Loading this week's streaming pitchers...</span>
+            )}
+          </div>
+          <StreamerTable kind="pitchers" data={streamerPitchersView.rows} isLoading={streamerPitchersView.isLoading} />
         </>
       ) : (
         <>
