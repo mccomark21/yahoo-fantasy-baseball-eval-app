@@ -1,0 +1,45 @@
+name: Deploy CBS Streamers to GitHub Pages
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays at 13:00 UTC (~9:00 AM ET during DST, ~8:00 AM ET in EST).
+    # CBS publishes the week-ahead sleeper hitter/pitcher columns early in the week.
+    - cron: '0 13 * * 1'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-cbs
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+        env:
+          RANKING_REFRESH_TARGET: cbs
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

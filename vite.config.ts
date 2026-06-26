@@ -2564,13 +2564,16 @@ function staticApiSnapshotPlugin(): Plugin {
       await mkdir(path.join(outputDir, 'cbs-streamer-pitchers'), { recursive: true })
 
       const refreshTarget = normalizeSnapshotRefreshTarget(process.env.RANKING_REFRESH_TARGET)
-      const refreshPitcher = refreshTarget !== 'relief'
+      // A 'cbs' build only refreshes the CBS feeds and reuses every other deployed
+      // snapshot, so the weekly streamer bootstrap never blocks on the fragile
+      // pitcher/relief/prospects scrapes (and vice versa).
+      const refreshPitcher = refreshTarget !== 'relief' && refreshTarget !== 'cbs'
       // The hitter board refreshes on its own cadence (RANKING_REFRESH_TARGET=hitter)
       // or on a full 'all' build; targeted pitcher/relief/cbs builds reuse the
       // deployed hitter snapshot so they never block on the hitter scrape.
       const refreshHitter = refreshTarget === 'hitter' || refreshTarget === 'all'
-      const refreshRelief = refreshTarget !== 'pitcher'
-      const refreshProspects = refreshTarget !== 'relief'
+      const refreshRelief = refreshTarget !== 'pitcher' && refreshTarget !== 'cbs'
+      const refreshProspects = refreshTarget !== 'relief' && refreshTarget !== 'cbs'
       // CBS streamer feeds get their own weekly cadence (RANKING_REFRESH_TARGET=cbs);
       // other targets reuse the deployed snapshot so a Tuesday SP build never blocks
       // on the more fragile CBS scrape.
