@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/table';
 import { EmptyState } from '@/components/EmptyState';
 import { useIsMobile } from '@/lib/use-mobile';
+import { cn } from '@/lib/utils';
 import {
   Select,
   SelectContent,
@@ -158,10 +159,25 @@ function getSortValue(row: ProspectRow, key: ProspectSortKey): number | string {
   return row[key] ?? Number.POSITIVE_INFINITY;
 }
 
+// DESIGN.md roster badges: Rostered = Navy Mid fill, Available = border stroke
+// + muted. Text label (not color alone) carries the state for colorblind users.
 function rosterBadgeClass(isRostered: boolean): string {
   return isRostered
-    ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'
-    : 'bg-muted text-muted-foreground';
+    ? 'bg-navy-mid text-white'
+    : 'border border-border text-muted-foreground';
+}
+
+// One source rank as a stacked label→value cell; mono value keeps the six-source
+// row decimal-aligned. Used in the expanded mobile prospect card.
+function SourceRank({ label, value }: { label: string; value: number | null }) {
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      <span className="font-mono text-xs tabular-nums text-foreground">{value ?? '—'}</span>
+    </div>
+  );
 }
 
 function formatAge(value: number | null): string {
@@ -307,54 +323,168 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
             const trend = computeProspectTrend(row);
             const momentum = computeProspectMomentum(row);
 
+            // Collapsed subline: Org · Pos · Level · Age. ETA moves to expanded.
+            const subline = [
+              formatOrgAbbreviation(row.organization),
+              formatDisplayPosition(row),
+              row.level ?? '—',
+              row.age != null ? `${formatAge(row.age)}y` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ');
+
             return (
-              <div key={rowKey} className="border-b px-3 py-2.5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <button
-                      type="button"
-                      onClick={() => toggleExpand(rowKey)}
-                      className="flex w-full items-center gap-2 text-left"
-                      aria-expanded={isExpanded}
-                      aria-label={`Toggle details for ${row.player_name}`}
-                    >
-                      <span className="min-w-0 flex-1 truncate font-medium">{row.player_name}</span>
-                      <MomentumCell momentum={momentum} />
-                      {isExpanded ? (
-                        <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      )}
-                    </button>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      {formatOrgAbbreviation(row.organization)} · {formatDisplayPosition(row)} · Age {formatAge(row.age)} · ETA {row.eta ?? '—'} · {row.level ?? '—'}
-                    </div>
+              <div
+                key={rowKey}
+                className={cn(
+                  'border-b',
+                  // Committed zebra striping carries the scan separation; the open card
+                  // keeps its own stripe so the dropdown stays consistent with the row
+                  // it belongs to (no separate "selected" tint). Muted text darkens on
+                  // the tint for AA contrast (it dips below 4.5:1 on surface-header
+                  // otherwise) and cascades to every label inside; dark mode keeps it
+                  // light. Even rows sit on the page background.
+                  index % 2 === 1 &&
+                    'bg-surface-header [--muted-foreground:oklch(0.43_0.03_258)] dark:[--muted-foreground:oklch(0.72_0.025_258)]'
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(rowKey)}
+                  className="flex w-full min-h-12 items-center gap-2.5 px-3 py-2.5 text-left active:bg-accent/60"
+                  aria-expanded={isExpanded}
+                  aria-label={`Toggle details for ${row.player_name}`}
+                >
+                  {/* Momentum column — fixed-width leftmost strip so the bars align
+                      row-to-row and the list skims as a single trend column */}
+                  <div className="w-24 shrink-0">
+                    <MomentumCell momentum={momentum} />
                   </div>
-                  <div className="text-right">
-                    <div className="font-mono text-xs">Avg {row.average_rank.toFixed(2)}</div>
+
+                  {/* Identity */}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-foreground">
+                      {row.player_name}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">{subline}</div>
+                  </div>
+
+                  {/* Avg rank (dominant) + roster status */}
+                  <div className="flex shrink-0 flex-col items-end leading-none">
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Avg
+                    </span>
+                    <span className="mt-0.5 font-mono text-lg font-semibold tabular-nums text-foreground">
+                      {row.average_rank.toFixed(2)}
+                    </span>
                     <span
-                      className={`mt-1 inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${rosterBadgeClass(row.is_rostered)}`}
+                      className={cn(
+                        'mt-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+                        rosterBadgeClass(row.is_rostered)
+                      )}
                     >
                       {rosterLabel}
                     </span>
                   </div>
-                </div>
+
+                  {/* Zone C — expand affordance */}
+                  <ChevronDown
+                    className={cn(
+                      'h-5 w-5 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none',
+                      isExpanded && 'rotate-180'
+                    )}
+                  />
+                </button>
+
+                {/* Expanded detail — mounted only when open (the prospect list runs
+                    long; always-mounted detail for every row is needless DOM). The
+                    enter animation is the 150–250ms reveal; reduced-motion skips it. */}
                 {isExpanded ? (
-                  <div className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
-                    <div title={trend.tooltip}>
-                      Trend: <span className="font-mono">{trend.emoji || '—'}</span>
+                  <div className="overflow-hidden duration-200 animate-in fade-in-0 slide-in-from-top-1 motion-reduce:animate-none">
+                    <div className="space-y-3 px-3 pb-3.5 pt-0.5 text-xs">
+                      {/* Source ranks — one decimal-aligned mono row, all six sources */}
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Source Ranks
+                        </div>
+                        <div className="grid grid-cols-6 gap-x-1 rounded-md border border-border bg-card px-2 py-2">
+                          <SourceRank label="MLB" value={row.mlb_rank} />
+                          <SourceRank label="FG" value={row.fangraphs_rank} />
+                          <SourceRank label="PLive" value={row.prospects_live_rank} />
+                          <SourceRank label="Fntrx" value={row.fantrax_rank} />
+                          <SourceRank label="PList" value={row.pitcherlist_rank} />
+                          <SourceRank label="TJ" value={row.tjstats_rank} />
+                        </div>
+                      </div>
+
+                      {/* Consensus spread + momentum */}
+                      <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <dt className="text-muted-foreground">Hi / Lo</dt>
+                          <dd className="font-mono tabular-nums text-foreground">
+                            {row.highest_rank} / {row.lowest_rank}
+                          </dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <dt className="text-muted-foreground">Std Dev</dt>
+                          <dd className="font-mono tabular-nums text-foreground">
+                            {row.stddev_rank.toFixed(2)}
+                          </dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <dt className="text-muted-foreground">ETA</dt>
+                          <dd className="font-mono tabular-nums text-foreground">{row.eta ?? '—'}</dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <dt className="text-muted-foreground">Trend</dt>
+                          <dd className="font-mono" title={trend.tooltip}>
+                            {trend.emoji || '—'}
+                          </dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <dt className="text-muted-foreground">Team</dt>
+                          <dd className="truncate text-foreground">{row.fantasy_team ?? 'Not Found'}</dd>
+                        </div>
+                      </dl>
+
+                      {/* Windowed minor-league stat block */}
+                      <div className="space-y-1 border-t pt-2.5">
+                        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Minor League Stats · {statsWindow}
+                        </div>
+                        {stats.atBats != null && (
+                          <div className="font-mono tabular-nums text-foreground">
+                            <span className="text-muted-foreground">AB</span> {formatNum(stats.atBats, 0)}
+                            {'  '}
+                            <span className="text-muted-foreground">AVG</span> {formatNum(stats.avg, 3)}
+                            {'  '}
+                            <span className="text-muted-foreground">HR</span> {formatNum(stats.homeRuns, 0)}
+                            {'  '}
+                            <span className="text-muted-foreground">OPS</span> {formatNum(stats.ops, 3)}
+                          </div>
+                        )}
+                        {stats.era != null && (
+                          <div className="font-mono tabular-nums text-foreground">
+                            <span className="text-muted-foreground">IP</span> {formatNum(stats.inningsPitched, 1)}
+                            {'  '}
+                            <span className="text-muted-foreground">ERA</span> {formatNum(stats.era, 2)}
+                            {'  '}
+                            <span className="text-muted-foreground">WHIP</span> {formatNum(stats.whip, 2)}
+                            {'  '}
+                            <span className="text-muted-foreground">K/9</span> {formatNum(stats.strikeoutsPer9, 1)}
+                          </div>
+                        )}
+                        {stats.atBats == null && stats.era == null && (
+                          <div className="text-muted-foreground">No {statsWindow} stats</div>
+                        )}
+                      </div>
+
+                      {row.player_summary ? (
+                        <p className="border-t pt-2.5 leading-5 text-muted-foreground">
+                          {row.player_summary}
+                        </p>
+                      ) : null}
                     </div>
-                    <div>Team: {row.fantasy_team ?? 'Not Found'}</div>
-                    <div>Ranks: MLB {row.mlb_rank ?? '—'} · FG {row.fangraphs_rank ?? '—'} · PLive {row.prospects_live_rank ?? '—'}</div>
-                    <div>High/Low/StdDev: {row.highest_rank} / {row.lowest_rank} / {row.stddev_rank.toFixed(2)}</div>
-                    <div>HT/WT: {row.height ?? '—'} / {row.weight ?? '—'}</div>
-                    <div>B/T: {row.bats ?? '—'} / {row.throws ?? '—'} · FV/OFP: {row.fv ?? '—'} / {row.ofp ?? '—'}</div>
-                    <div className="pt-1 border-t mt-2">
-                      <div className="font-semibold mb-1">Minor League Stats ({statsWindow})</div>
-                      {stats.atBats != null && <div>AB: {formatNum(stats.atBats, 0)} · AVG: {formatNum(stats.avg, 3)} · HR: {formatNum(stats.homeRuns, 0)}</div>}
-                      {stats.era != null && <div>IP: {formatNum(stats.inningsPitched, 1)} · ERA: {formatNum(stats.era, 2)} · WHIP: {formatNum(stats.whip, 2)} · K/9: {formatNum(stats.strikeoutsPer9, 1)}</div>}
-                    </div>
-                    {row.player_summary ? <div>Summary: {row.player_summary}</div> : null}
                   </div>
                 ) : null}
               </div>

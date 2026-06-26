@@ -3,6 +3,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { ChevronDown } from 'lucide-react';
+import { useIsMobile } from '@/lib/use-mobile';
+import { cn } from '@/lib/utils';
 
 interface MultiSelectProps {
   id?: string;
@@ -22,7 +24,14 @@ export function MultiSelect({
   selectAllLabel = 'Select All',
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false);
+  const isMobile = useIsMobile();
   const allSelected = options.length > 0 && selected.length === options.length;
+
+  // 44px-tall rows on touch; the tighter desktop rhythm stays on pointer.
+  const optionRowClass = cn(
+    'flex items-center gap-2 rounded px-2 text-sm cursor-pointer hover:bg-accent',
+    isMobile ? 'min-h-11 py-2.5' : 'py-1.5'
+  );
 
   const toggle = (value: string) => {
     if (selected.includes(value)) {
@@ -41,7 +50,7 @@ export function MultiSelect({
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal={isMobile}>
       <PopoverTrigger
         id={id}
         className="inline-flex w-full md:w-auto min-w-0 md:min-w-[180px] items-center justify-between rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm whitespace-nowrap transition-colors outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 h-9 md:h-8"
@@ -69,22 +78,18 @@ export function MultiSelect({
         )}
         <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] md:w-[220px] max-h-[300px] overflow-auto p-2" align="start">
-        <div className="flex flex-col gap-1">
-          <label
-            className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-accent cursor-pointer text-sm border-b"
-          >
-            <Checkbox
-              checked={allSelected}
-              onCheckedChange={toggleAll}
-            />
+      <PopoverContent
+        align="start"
+        showBackdrop={isMobile}
+        className="w-[var(--radix-popover-trigger-width)] md:w-[220px] max-h-[min(60vh,320px)] overflow-y-auto overscroll-contain p-1.5"
+      >
+        <div className="flex flex-col gap-0.5">
+          <label className={cn(optionRowClass, 'mb-0.5 border-b pb-2 rounded-b-none font-medium')}>
+            <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
             {selectAllLabel}
           </label>
           {options.map((opt) => (
-            <label
-              key={opt}
-              className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-accent cursor-pointer text-sm"
-            >
+            <label key={opt} className={optionRowClass}>
               <Checkbox
                 checked={selected.includes(opt)}
                 onCheckedChange={() => toggle(opt)}

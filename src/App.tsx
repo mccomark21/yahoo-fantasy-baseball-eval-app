@@ -642,7 +642,13 @@ export default function App() {
         </>
       ) : (
         <>
-          <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
+          {/* Verbose multi-source snapshot note eats scarce mobile height; hide it
+              on phones (the table still self-reports loading). Errors stay visible. */}
+          <div
+            className={`border-b px-3 py-2 md:px-4 text-xs text-muted-foreground ${
+              prospectError ? '' : 'hidden md:block'
+            }`}
+          >
             {prospectError ? (
               <span role="alert" className="text-destructive">Prospect rankings fetch failed: {prospectError}</span>
             ) : prospectsMeta ? (
