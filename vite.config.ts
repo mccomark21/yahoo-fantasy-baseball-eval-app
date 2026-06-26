@@ -10,6 +10,12 @@ const PITCHER_LIST_CATEGORY_URL =
   'https://pitcherlist.com/category/fantasy/starting-pitchers/the-list/'
 const RELIEF_LIST_CATEGORY_URL_SVHLD =
   'https://pitcherlist.com/category/fantasy/relief-pitchers/reliever-ranks/'
+const HITTER_LIST_CATEGORY_URL =
+  'https://pitcherlist.com/category/fantasy/hitters-fantasy/hitter-list/'
+// Pitcher List publishes a weekly "Top 150 Hitters" board; the season's seed
+// article carries no week suffix, weekly updates append "-week-N".
+const HITTER_LIST_ARTICLE_PATTERN = /\/top-150-hitters-for-fantasy-baseball-[^/]+\/?$/i
+const HITTER_LIST_MAX_RANK = 150
 const MLB_PROSPECTS_URL = 'https://www.mlb.com/milb/prospects/top100/'
 const FANGRAPHS_PROSPECTS_URL = 'https://www.fangraphs.com/prospects/the-board'
 const PROSPECTS_LIVE_URL = 'https://www.prospectslive.com/2026-top-100-prospects/'
@@ -25,7 +31,7 @@ const HISTORY_BACKFILL_TARGET = 8
 
 type ReliefScoringMode = 'svhld' | 'saves'
 type ProspectSourceName = 'mlb' | 'fangraphs' | 'prospects_live' | 'fantrax' | 'pitcherlist' | 'tjstats'
-type SnapshotRefreshTarget = 'all' | 'pitcher' | 'relief' | 'cbs'
+type SnapshotRefreshTarget = 'all' | 'pitcher' | 'hitter' | 'relief' | 'cbs'
 type PitcherSourceList = 'SP' | 'RP'
 
 type TrendDirection = 'up' | 'down' | 'flat' | 'new' | 'unknown'
@@ -511,7 +517,8 @@ function parseRankingArticle(
   articleHtml: string,
   fallbackTitle: string,
   minExpectedRows = 90,
-  tableHeadingPattern?: RegExp
+  tableHeadingPattern?: RegExp,
+  maxRank = 100
 ): PitcherListLatestResponse {
   const $ = load(articleHtml)
   const rankByNumber = new Map<number, PitcherListRankRow>()
@@ -540,7 +547,7 @@ function parseRankingArticle(
     if (cells.length < 2) return
 
     const rank = Number.parseInt(cells[0], 10)
-    if (!Number.isFinite(rank) || rank < 1 || rank > 100) return
+    if (!Number.isFinite(rank) || rank < 1 || rank > maxRank) return
 
     const playerName = cleanPlayerName(cells[1])
     if (!playerName) return
@@ -576,7 +583,7 @@ function parseRankingArticle(
     }
 
     const rank = Number.parseInt(rankMatch[1], 10)
-    if (!Number.isFinite(rank) || rank < 1 || rank > 100) {
+    if (!Number.isFinite(rank) || rank < 1 || rank > maxRank) {
       return
     }
 
@@ -636,6 +643,20 @@ function parseRankingArticle(
 
 function parsePitcherListArticle(articleUrl: string, articleHtml: string): PitcherListLatestResponse {
   return parseRankingArticle(articleUrl, articleHtml, 'Pitcher List Top 100')
+}
+
+function parseHitterListArticle(articleUrl: string, articleHtml: string): PitcherListLatestResponse {
+  // The hitter board runs 150 deep with a Position column the pitcher tables
+  // lack; columns are Rank | Hitter | Team | Position | Change, so the shared
+  // parser's rank/team/movement cell offsets still line up.
+  return parseRankingArticle(
+    articleUrl,
+    articleHtml,
+    'Pitcher List Top 150 Hitters',
+    120,
+    undefined,
+    HITTER_LIST_MAX_RANK
+  )
 }
 
 function parseReliefListArticle(
@@ -868,6 +889,7 @@ function normalizeSnapshotRefreshTarget(value: string | undefined): SnapshotRefr
   const normalized = value?.trim().toLowerCase()
   if (
     normalized === 'pitcher' ||
+    normalized === 'hitter' ||
     normalized === 'relief' ||
     normalized === 'cbs' ||
     normalized === 'all'
@@ -2256,6 +2278,95 @@ function pitcherListApiPlugin(): Plugin {
   }
 }
 
+function hitterListApiPlugin(): Plugin {
+  const latestRoute = '/api/hitter-list/latest'
+  const historyRoute = '/api/hitter-list/history'
+
+  const middleware = async (req: { url?: string }, res: { setHeader: (name: string, value: string) => void; statusCode: number; end: (body?: string) => void }) => {
+    if (!req.url) {
+      return
+    }
+
+    const requestUrl = new URL(req.url, 'http://localhost')
+    const requestPath = requestUrl.pathname
+    if (requestPath !== latestRoute && requestPath !== historyRoute) {
+      return
+    }
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+    try {
+      const categoryHtml = await fetchHtml(HITTER_LIST_CATEGORY_URL)
+      const latestArticleUrl = extractLatestArticleUrl(
+        categoryHtml,
+        HITTER_LIST_ARTICLE_PATTERN,
+        'Unable to find latest hitter rankings article URL'
+      )
+      console.log(`[hitter-list] selected article URL: ${latestArticleUrl}`)
+      const articleHtml = await fetchHtml(latestArticleUrl)
+      const latestPayload = parseHitterListArticle(latestArticleUrl, articleHtml)
+
+      if (requestPath === historyRoute) {
+        let existingHistory: PitcherListHistoryResponse | null = null
+
+        // Prefer the local backfilled file; fall back to deployed snapshot.
+        const localHistoryPath = path.resolve(process.cwd(), 'dist', 'api', 'hitter-list', 'history.json')
+        try {
+          const raw = await readFile(localHistoryPath, 'utf8')
+          existingHistory = JSON.parse(raw) as PitcherListHistoryResponse
+          console.log(`[hitter-list] loaded local history (${existingHistory.snapshots.length} snapshots)`)
+        } catch {
+          const historyUrl = buildProductionSnapshotUrl('hitter-list/history.json')
+          try {
+            existingHistory = await fetchJsonSnapshot<PitcherListHistoryResponse>(historyUrl)
+          } catch {
+            existingHistory = null
+          }
+        }
+
+        const payload: PitcherListHistoryResponse = {
+          snapshots: upsertHistorySnapshots(
+            existingHistory?.snapshots,
+            toPitcherHistorySnapshot(latestPayload)
+          ),
+        }
+
+        res.statusCode = 200
+        res.end(JSON.stringify(payload))
+        return
+      }
+
+      res.statusCode = 200
+      res.end(JSON.stringify(latestPayload))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown scraper error'
+      res.statusCode = 500
+      res.end(JSON.stringify({
+        error: 'hitter_list_scrape_failed',
+        message,
+      }))
+    }
+  }
+
+  return {
+    name: 'hitter-list-api',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        middleware(req, res).then(() => {
+          if (!res.writableEnded) next()
+        })
+      })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        middleware(req, res).then(() => {
+          if (!res.writableEnded) next()
+        })
+      })
+    },
+  }
+}
+
 function reliefListApiPlugin(): Plugin {
   const latestRoute = '/api/relief-list/latest'
   const historyRoute = '/api/relief-list/history'
@@ -2445,6 +2556,7 @@ function staticApiSnapshotPlugin(): Plugin {
     async closeBundle() {
       const outputDir = path.resolve(process.cwd(), 'dist', 'api')
       await mkdir(path.join(outputDir, 'pitcher-list'), { recursive: true })
+      await mkdir(path.join(outputDir, 'hitter-list'), { recursive: true })
       await mkdir(path.join(outputDir, 'relief-list'), { recursive: true })
       await mkdir(path.join(outputDir, 'prospects'), { recursive: true })
       await mkdir(path.join(outputDir, 'injured-pitchers'), { recursive: true })
@@ -2453,6 +2565,10 @@ function staticApiSnapshotPlugin(): Plugin {
 
       const refreshTarget = normalizeSnapshotRefreshTarget(process.env.RANKING_REFRESH_TARGET)
       const refreshPitcher = refreshTarget !== 'relief'
+      // The hitter board refreshes on its own cadence (RANKING_REFRESH_TARGET=hitter)
+      // or on a full 'all' build; targeted pitcher/relief/cbs builds reuse the
+      // deployed hitter snapshot so they never block on the hitter scrape.
+      const refreshHitter = refreshTarget === 'hitter' || refreshTarget === 'all'
       const refreshRelief = refreshTarget !== 'pitcher'
       const refreshProspects = refreshTarget !== 'relief'
       // CBS streamer feeds get their own weekly cadence (RANKING_REFRESH_TARGET=cbs);
@@ -2564,6 +2680,106 @@ function staticApiSnapshotPlugin(): Plugin {
         ),
       }
       await writeJsonSnapshot(path.join('pitcher-list', 'history.json'), pitcherHistoryPayload)
+
+      // ----- Hitter rankings (Pitcher List Top 150) -----
+      let hitterPayload: PitcherListLatestResponse
+      if (refreshHitter) {
+        const hitterCategoryHtml = await fetchHtml(HITTER_LIST_CATEGORY_URL)
+        const hitterArticleUrl = extractLatestArticleUrl(
+          hitterCategoryHtml,
+          HITTER_LIST_ARTICLE_PATTERN,
+          'Unable to find latest hitter rankings article URL'
+        )
+        console.log(`[snapshot] selected hitter article URL: ${hitterArticleUrl}`)
+        const hitterArticleHtml = await fetchHtml(hitterArticleUrl)
+        hitterPayload = parseHitterListArticle(hitterArticleUrl, hitterArticleHtml)
+      } else {
+        const hitterSnapshotUrl = buildProductionSnapshotUrl('hitter-list/latest.json')
+        try {
+          hitterPayload = await fetchJsonSnapshot<PitcherListLatestResponse>(hitterSnapshotUrl)
+          console.log(`[snapshot] reusing deployed hitter snapshot: ${hitterSnapshotUrl}`)
+        } catch (error) {
+          console.warn(
+            `[snapshot] fallback failed for hitter snapshot (${hitterSnapshotUrl}), scraping live instead: ${error instanceof Error ? error.message : String(error)}`
+          )
+          const hitterCategoryHtml = await fetchHtml(HITTER_LIST_CATEGORY_URL)
+          const hitterArticleUrl = extractLatestArticleUrl(
+            hitterCategoryHtml,
+            HITTER_LIST_ARTICLE_PATTERN,
+            'Unable to find latest hitter rankings article URL'
+          )
+          const hitterArticleHtml = await fetchHtml(hitterArticleUrl)
+          hitterPayload = parseHitterListArticle(hitterArticleUrl, hitterArticleHtml)
+        }
+      }
+      await writeJsonSnapshot(path.join('hitter-list', 'latest.json'), hitterPayload)
+
+      const hitterHistoryUrl = buildProductionSnapshotUrl('hitter-list/history.json')
+      let existingHitterHistory: PitcherListHistoryResponse | null = null
+      try {
+        existingHitterHistory = await fetchJsonSnapshot<PitcherListHistoryResponse>(hitterHistoryUrl)
+      } catch (error) {
+        console.warn(
+          `[snapshot] history seed unavailable for hitter (${hitterHistoryUrl}): ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+
+      // Backfill: scrape past articles when history is too sparse to build 8-week trend
+      const hitterBackfillSnapshots: PitcherListHistorySnapshot[] = []
+      const existingHitterCount = existingHitterHistory?.snapshots?.length ?? 0
+      if (refreshHitter && existingHitterCount < HISTORY_BACKFILL_TARGET) {
+        const needed = HISTORY_BACKFILL_TARGET - existingHitterCount
+        console.log(
+          `[snapshot] hitter history has ${existingHitterCount} snapshot(s); backfilling up to ${needed} past article(s)`
+        )
+        try {
+          const catHtml = await fetchHtml(HITTER_LIST_CATEGORY_URL)
+          const allUrls = extractMultipleArticleUrls(
+            catHtml,
+            HITTER_LIST_ARTICLE_PATTERN,
+            'Unable to find hitter rankings article URLs',
+            HISTORY_BACKFILL_TARGET + 1
+          )
+          const latestPath = new URL(hitterPayload.source_url).pathname.toLowerCase()
+          const pastUrls = allUrls
+            .filter((url) => {
+              try {
+                return new URL(url).pathname.toLowerCase() !== latestPath
+              } catch {
+                return true
+              }
+            })
+            .slice(0, needed)
+
+          for (const url of pastUrls) {
+            try {
+              const html = await fetchHtml(url)
+              const parsed = parseHitterListArticle(url, html)
+              const snapshot = toPitcherHistorySnapshot(parsed)
+              hitterBackfillSnapshots.push(snapshot)
+              console.log(`[snapshot] backfilled hitter article: ${url} → ${snapshot.snapshot_date}`)
+            } catch (err) {
+              console.warn(
+                `[snapshot] failed to backfill hitter article ${url}: ${
+                  err instanceof Error ? err.message : String(err)
+                }`
+              )
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[snapshot] hitter backfill failed: ${err instanceof Error ? err.message : String(err)}`
+          )
+        }
+      }
+
+      const hitterHistoryPayload: PitcherListHistoryResponse = {
+        snapshots: upsertHistorySnapshots(
+          [...(existingHitterHistory?.snapshots ?? []), ...hitterBackfillSnapshots],
+          toPitcherHistorySnapshot(hitterPayload)
+        ),
+      }
+      await writeJsonSnapshot(path.join('hitter-list', 'history.json'), hitterHistoryPayload)
 
       let svhldPayload: ReliefListLatestResponse
       let savesPayload: ReliefListLatestResponse
@@ -2769,6 +2985,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     pitcherListApiPlugin(),
+    hitterListApiPlugin(),
     reliefListApiPlugin(),
     injuredPitchersApiPlugin(),
     prospectsApiPlugin(),

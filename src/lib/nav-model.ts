@@ -28,6 +28,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Hitters',
     views: [
       { value: 'hitters',          label: 'StatCast'  },
+      { value: 'hitter-rankings',  label: 'Rankings'  },
       { value: 'streamer-hitters', label: 'Streamers' },
     ],
   },

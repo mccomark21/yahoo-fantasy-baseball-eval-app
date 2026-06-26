@@ -1,6 +1,8 @@
 import { getDB } from './duckdb';
 import { normalizePlayerName } from './player-name-matcher';
 import type {
+  HitterListHistorySnapshot,
+  HitterListRankRow,
   InjuredPitcherRow,
   PitcherListHistorySnapshot,
   PitcherListRankRow,
@@ -108,6 +110,24 @@ export interface ReliefTrendRow {
   movement_value: number | null;
   trend_direction: TrendDirection;
   notes: string | null;
+  fantasy_team: string | null;
+  league_name: string | null;
+  trend_8w_series: (number | null)[];
+  trend_8w_net: number | null;
+  trend_start_rank: number | null;
+  trend_end_rank: number | null;
+}
+
+export interface HitterRankTrendRow {
+  latest_rank: number;
+  player_name: string;
+  mlb_team: string | null;
+  movement_raw: string;
+  movement_value: number | null;
+  trend_direction: TrendDirection;
+  notes: string | null;
+  /** snapshot_date (YYYY-MM-DD) of the snapshot the surviving note came from. */
+  notes_date: string | null;
   fantasy_team: string | null;
   league_name: string | null;
   trend_8w_series: (number | null)[];
@@ -1652,6 +1672,99 @@ export async function queryReliefTrends(
         trend_end_rank: trendEndRank,
       }),
     }) satisfies ReliefTrendRow[];
+
+    const filtered = applyFantasyTeamAndPlayerSearchFilters(
+      joined,
+      selectedFantasyTeams,
+      playerNameSearch,
+      normalizePlayerName
+    );
+
+    return filtered.sort((a, b) => a.latest_rank - b.latest_rank);
+  } finally {
+    await conn.close();
+  }
+}
+
+/**
+ * Most-recent note per player across snapshots, with the date it was published.
+ *
+ * Pitcher List's hitter board carries write-ups only occasionally, so a player's
+ * commentary can go stale for weeks. We surface the newest note that exists for
+ * a player anywhere in history and cite its snapshot date; a fresher note in a
+ * later week supersedes the old one automatically (newest snapshot wins).
+ */
+export function buildLatestNoteByNormName(
+  historySnapshots: HitterListHistorySnapshot[],
+  normalize: (name: string) => string
+): Map<string, { note: string; date: string }> {
+  const byDateDesc = [...historySnapshots].sort((a, b) =>
+    b.snapshot_date.localeCompare(a.snapshot_date)
+  );
+
+  const latestNoteByNormName = new Map<string, { note: string; date: string }>();
+  for (const snapshot of byDateDesc) {
+    if (!Array.isArray(snapshot.rows)) continue;
+    for (const row of snapshot.rows) {
+      const normName = normalize(row.player_name);
+      if (!normName || latestNoteByNormName.has(normName)) continue;
+      const note = row.notes?.trim();
+      if (note) {
+        latestNoteByNormName.set(normName, { note, date: snapshot.snapshot_date });
+      }
+    }
+  }
+  return latestNoteByNormName;
+}
+
+export async function queryHitterRankTrends(
+  ranks: HitterListRankRow[],
+  selectedLeague: string | null,
+  selectedFantasyTeams: string[],
+  playerNameSearch?: string,
+  historySnapshots: HitterListHistorySnapshot[] = []
+): Promise<HitterRankTrendRow[]> {
+  const db = await getDB();
+  const conn = await db.connect();
+
+  try {
+    const ownerByNormName = await loadOwnershipByNormName(conn, selectedLeague);
+    const trendByNormName = buildRankTrendByNormName(
+      ranks,
+      historySnapshots,
+      normalizePlayerName,
+      8
+    );
+    const latestNoteByNormName = buildLatestNoteByNormName(historySnapshots, normalizePlayerName);
+
+    const joined = buildRankRowsWithTrend({
+      ranks,
+      ownerByNormName,
+      trendByNormName,
+      normalizePlayerName,
+      buildRow: ({ rank, ownership, trendSeries, trendStartRank, trendEndRank, trendNet }) => {
+        const persistedNote = latestNoteByNormName.get(normalizePlayerName(rank.player_name));
+        return {
+          latest_rank: rank.latest_rank,
+          player_name: rank.player_name,
+          mlb_team: rank.mlb_team,
+          movement_raw: rank.movement_raw,
+          movement_value: rank.movement_value,
+          trend_direction: rank.trend_direction,
+          // Carry forward the most recent note we have for the player, citing
+          // its date; fall back to the current article's note (undated) when
+          // history is empty.
+          notes: persistedNote?.note ?? rank.notes,
+          notes_date: persistedNote?.date ?? null,
+          fantasy_team: ownership?.fantasy_team ?? null,
+          league_name: ownership?.league_name ?? null,
+          trend_8w_series: trendSeries,
+          trend_8w_net: trendNet,
+          trend_start_rank: trendStartRank,
+          trend_end_rank: trendEndRank,
+        };
+      },
+    }) satisfies HitterRankTrendRow[];
 
     const filtered = applyFantasyTeamAndPlayerSearchFilters(
       joined,

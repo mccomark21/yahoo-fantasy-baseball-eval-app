@@ -13,6 +13,7 @@ import {
 } from '@/lib/queries';
 import {
   defaultHitterFilters,
+  defaultHitterRankFilters,
   defaultInjuredFilters,
   defaultPitcherFilters,
   defaultProspectFilters,
@@ -21,6 +22,7 @@ import {
   defaultStreamerPitcherFilters,
   type ViewFilters,
   type HitterFilters,
+  type HitterRankFilters,
   type PitcherFilters,
   type ReliefFilters,
   type InjuredFilters,
@@ -31,6 +33,7 @@ import {
 import { FilterBar } from '@/components/FilterBar';
 import { PlayerTable } from '@/components/PlayerTable';
 import { PitcherTable } from '@/components/PitcherTable';
+import { HitterRankTable } from '@/components/HitterRankTable';
 import { ReliefPitcherTable } from '@/components/ReliefPitcherTable';
 import { InjuredPitcherTable } from '@/components/InjuredPitcherTable';
 import { StreamerTable } from '@/components/StreamerTable';
@@ -112,6 +115,7 @@ export default function App() {
 
   const [selectedLeague, setSelectedLeague] = useState<string>('');
   const [hitterFilters, setHitterFilters] = useState<HitterFilters>(defaultHitterFilters);
+  const [hitterRankFilters, setHitterRankFilters] = useState<HitterRankFilters>(defaultHitterRankFilters);
   const [pitcherFilters, setPitcherFilters] = useState<PitcherFilters>(defaultPitcherFilters);
   const [reliefFilters, setReliefFilters] = useState<ReliefFilters>(defaultReliefFilters);
   const [injuredFilters, setInjuredFilters] = useState<InjuredFilters>(defaultInjuredFilters);
@@ -125,19 +129,21 @@ export default function App() {
 
   const filtersByMode = useMemo<Record<string, ViewFilters>>(() => ({
     hitters: hitterFilters,
+    'hitter-rankings': hitterRankFilters,
     pitchers: pitcherFilters,
     relievers: reliefFilters,
     injured: injuredFilters,
     'streamer-hitters': streamerHitterFilters,
     'streamer-pitchers': streamerPitcherFilters,
     prospects: prospectFilters,
-  }), [hitterFilters, pitcherFilters, reliefFilters, injuredFilters, streamerHitterFilters, streamerPitcherFilters, prospectFilters]);
+  }), [hitterFilters, hitterRankFilters, pitcherFilters, reliefFilters, injuredFilters, streamerHitterFilters, streamerPitcherFilters, prospectFilters]);
 
   const activeFilters = filtersByMode[viewMode];
 
   const handleFiltersChange = useCallback((updated: ViewFilters) => {
     switch (updated.mode) {
       case 'hitters': setHitterFilters(updated as HitterFilters); break;
+      case 'hitter-rankings': setHitterRankFilters(updated as HitterRankFilters); break;
       case 'pitchers': setPitcherFilters(updated as PitcherFilters); break;
       case 'relievers': setReliefFilters(updated as ReliefFilters); break;
       case 'injured': setInjuredFilters(updated as InjuredFilters); break;
@@ -168,6 +174,10 @@ export default function App() {
       const nextTeamSelection = defaults.length > 0 ? defaults : [];
 
       setHitterFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
+      // Hitter Rankings defaults to Free Agent too: the board is most useful for
+      // spotting unowned bats to add, so available hitters lead. Widening the
+      // team filter surfaces already-rostered ranked hitters.
+      setHitterRankFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
       setPitcherFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
       setReliefFilters((f) => ({ ...f, selectedTeams: nextTeamSelection }));
       // Injured tab defaults to Free Agent too: the view's purpose is spotting
@@ -261,6 +271,15 @@ export default function App() {
     [selectedLeague, pitcherFilters.selectedTeams, playerSearch],
   );
 
+  const hitterRankInput = useMemo(
+    () => ({
+      selectedLeague,
+      selectedTeams: hitterRankFilters.selectedTeams,
+      playerSearch,
+    }),
+    [selectedLeague, hitterRankFilters.selectedTeams, playerSearch],
+  );
+
   const reliefInput = useMemo(
     () => ({
       selectedLeague,
@@ -300,6 +319,7 @@ export default function App() {
 
   const {
     pitcher: pitcherView,
+    hitterRank: hitterRankView,
     relief: reliefView,
     injured: injuredView,
     streamerHitters: streamerHittersView,
@@ -308,6 +328,7 @@ export default function App() {
     isReady: status === 'ready' && defaultsApplied,
     viewMode,
     pitcher: pitcherInput,
+    hitterRank: hitterRankInput,
     relief: reliefInput,
     injured: injuredInput,
     streamerHitters: streamerHittersInput,
@@ -630,6 +651,32 @@ export default function App() {
             )}
           </div>
           <PitcherTable data={pitcherView.rows} isLoading={pitcherView.isLoading} />
+        </>
+      ) : viewMode === 'hitter-rankings' ? (
+        <>
+          <div className="border-b px-3 py-2 md:px-4 text-xs text-muted-foreground">
+            {hitterRankView.error ? (
+              <span role="alert" className="text-destructive">Hitter rankings fetch failed: {hitterRankView.error}</span>
+            ) : hitterRankView.meta ? (
+              <span>
+                {hitterRankView.meta.title}
+                {hitterRankView.meta.published_at ? ` · Published ${new Date(hitterRankView.meta.published_at).toLocaleDateString()}` : ''}
+                {' · '}
+                <a
+                  href={hitterRankView.meta.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Source: ${hitterRankView.meta.title}`}
+                  className="underline hover:text-navy-mid transition-colors duration-100"
+                >
+                  Source
+                </a>
+              </span>
+            ) : (
+              <span>Loading latest Pitcher List hitter rankings...</span>
+            )}
+          </div>
+          <HitterRankTable data={hitterRankView.rows} isLoading={hitterRankView.isLoading} />
         </>
       ) : viewMode === 'relievers' ? (
         <>

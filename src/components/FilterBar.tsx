@@ -3,6 +3,7 @@ import { ChevronDown } from 'lucide-react';
 import type { FilterOptions } from '@/lib/queries';
 import type {
   HitterFilters,
+  HitterRankFilters,
   InjuredFilters,
   PitcherFilters,
   ProspectFilters,
@@ -64,6 +65,7 @@ export function FilterBar({
 
   // Narrow to per-view filter shapes for type-safe access inside JSX.
   const hf = filters.mode === 'hitters' ? (filters as HitterFilters) : null;
+  const hrf = filters.mode === 'hitter-rankings' ? (filters as HitterRankFilters) : null;
   const pf = filters.mode === 'pitchers' ? (filters as PitcherFilters) : null;
   const rf = filters.mode === 'relievers' ? (filters as ReliefFilters) : null;
   const inf = filters.mode === 'injured' ? (filters as InjuredFilters) : null;
@@ -235,8 +237,8 @@ export function FilterBar({
               </div>
             )}
 
-            {/* Fantasy Team multi-select — pitchers / relievers / injured / streamers (right-aligned) */}
-            {(pf != null || rf != null || inf != null || shf != null || spf != null) && (
+            {/* Fantasy Team multi-select — hitter rankings / pitchers / relievers / injured / streamers (right-aligned) */}
+            {(hrf != null || pf != null || rf != null || inf != null || shf != null || spf != null) && (
               <div className="flex flex-col gap-1 w-full md:w-auto md:ml-auto">
                 <label htmlFor="filter-fantasy-team" className="text-xs font-medium text-muted-foreground">Fantasy Team</label>
                 <MultiSelect
@@ -282,6 +284,8 @@ export function FilterBar({
               <label htmlFor="filter-player-name" className="text-xs font-medium text-muted-foreground">
                 {mode === 'hitters'
                   ? 'Player Name'
+                  : mode === 'hitter-rankings'
+                    ? 'Hitter Name'
                   : mode === 'pitchers'
                     ? 'Pitcher Name'
                     : mode === 'relievers'

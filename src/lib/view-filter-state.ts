@@ -15,6 +15,11 @@ export interface HitterFilters {
   timeWindow: TimeWindow;
 }
 
+export interface HitterRankFilters {
+  readonly mode: 'hitter-rankings';
+  selectedTeams: string[];
+}
+
 export interface PitcherFilters {
   readonly mode: 'pitchers';
   selectedTeams: string[];
@@ -51,6 +56,7 @@ export interface ProspectFilters {
 
 export type ViewFilters =
   | HitterFilters
+  | HitterRankFilters
   | PitcherFilters
   | ReliefFilters
   | InjuredFilters
@@ -60,6 +66,10 @@ export type ViewFilters =
 
 export function defaultHitterFilters(): HitterFilters {
   return { mode: 'hitters', selectedTeams: [], selectedPositions: [], timeWindow: 'STD' };
+}
+
+export function defaultHitterRankFilters(): HitterRankFilters {
+  return { mode: 'hitter-rankings', selectedTeams: [] };
 }
 
 export function defaultPitcherFilters(): PitcherFilters {

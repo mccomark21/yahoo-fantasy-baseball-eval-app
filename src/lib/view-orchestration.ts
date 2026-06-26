@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  fetchLatestHitterList,
+  fetchHitterListHistory,
   fetchLatestInjuredPitchers,
   fetchLatestPitcherList,
   fetchPitcherListHistory,
   fetchLatestReliefList,
   fetchReliefListHistory,
+  type HitterListHistorySnapshot,
+  type HitterListLatestResponse,
+  type HitterListRankRow,
   type InjuredPitcherRow,
   type InjuredPitchersLatestResponse,
   type PitcherListHistorySnapshot,
@@ -17,9 +22,11 @@ import {
 } from './pitcherlist-client';
 import {
   queryCbsStreamer,
+  queryHitterRankTrends,
   queryInjuredPitchers,
   queryPitcherTrends,
   queryReliefTrends,
+  type HitterRankTrendRow,
   type InjuredPitcherTrendRow,
   type PitcherTrendRow,
   type ReliefTrendRow,
@@ -32,6 +39,7 @@ import {
 
 export type ViewMode =
   | 'hitters'
+  | 'hitter-rankings'
   | 'pitchers'
   | 'relievers'
   | 'injured'
@@ -44,6 +52,12 @@ export type ViewMode =
 // ---------------------------------------------------------------------------
 
 export interface PitcherViewMeta {
+  title: string;
+  source_url: string;
+  published_at: string | null;
+}
+
+export interface HitterRankViewMeta {
   title: string;
   source_url: string;
   published_at: string | null;
@@ -77,6 +91,12 @@ export interface StreamerViewMeta {
 // ---------------------------------------------------------------------------
 
 export interface PitcherViewInput {
+  selectedLeague: string | null;
+  selectedTeams: string[];
+  playerSearch: string;
+}
+
+export interface HitterRankViewInput {
   selectedLeague: string | null;
   selectedTeams: string[];
   playerSearch: string;
@@ -135,6 +155,41 @@ export interface PitcherViewDeps {
 export function makePitcherViewExecute(
   deps: PitcherViewDeps,
 ): (input: PitcherViewInput) => Promise<{ rows: PitcherTrendRow[]; meta: PitcherViewMeta }> {
+  return async (input) => {
+    const [latest, history] = await Promise.all([deps.fetchLatest(), deps.fetchHistory()]);
+    const rows = await deps.queryTrends(
+      latest.rows,
+      input.selectedLeague,
+      input.selectedTeams,
+      input.playerSearch || undefined,
+      history.snapshots,
+    );
+    return {
+      rows,
+      meta: {
+        title: latest.title,
+        source_url: latest.source_url,
+        published_at: latest.published_at,
+      },
+    };
+  };
+}
+
+export interface HitterRankViewDeps {
+  fetchLatest: () => Promise<HitterListLatestResponse>;
+  fetchHistory: () => Promise<{ snapshots: HitterListHistorySnapshot[] }>;
+  queryTrends: (
+    rows: HitterListRankRow[],
+    league: string | null,
+    teams: string[],
+    search: string | undefined,
+    history: HitterListHistorySnapshot[],
+  ) => Promise<HitterRankTrendRow[]>;
+}
+
+export function makeHitterRankViewExecute(
+  deps: HitterRankViewDeps,
+): (input: HitterRankViewInput) => Promise<{ rows: HitterRankTrendRow[]; meta: HitterRankViewMeta }> {
   return async (input) => {
     const [latest, history] = await Promise.all([deps.fetchLatest(), deps.fetchHistory()]);
     const rows = await deps.queryTrends(
@@ -269,6 +324,12 @@ const defaultPitcherViewExecute = makePitcherViewExecute({
   queryTrends: queryPitcherTrends,
 });
 
+const defaultHitterRankViewExecute = makeHitterRankViewExecute({
+  fetchLatest: fetchLatestHitterList,
+  fetchHistory: fetchHitterListHistory,
+  queryTrends: queryHitterRankTrends,
+});
+
 const defaultReliefViewExecute = makeReliefViewExecute({
   fetchLatest: fetchLatestReliefList,
   fetchHistory: fetchReliefListHistory,
@@ -307,12 +368,15 @@ export interface RankingViewsInput {
   isReady: boolean;
   viewMode: ViewMode;
   pitcher: PitcherViewInput;
+  hitterRank: HitterRankViewInput;
   relief: ReliefViewInput;
   injured: InjuredViewInput;
   streamerHitters: StreamerViewInput;
   streamerPitchers: StreamerViewInput;
   /** Override for testing only. */
   pitcherExecute?: (input: PitcherViewInput) => Promise<{ rows: PitcherTrendRow[]; meta: PitcherViewMeta }>;
+  /** Override for testing only. */
+  hitterRankExecute?: (input: HitterRankViewInput) => Promise<{ rows: HitterRankTrendRow[]; meta: HitterRankViewMeta }>;
   /** Override for testing only. */
   reliefExecute?: (input: ReliefViewInput) => Promise<{ rows: ReliefTrendRow[]; meta: ReliefViewMeta }>;
   /** Override for testing only. */
@@ -325,6 +389,7 @@ export interface RankingViewsInput {
 
 export interface RankingViewsState {
   pitcher: RankingViewState<PitcherTrendRow, PitcherViewMeta>;
+  hitterRank: RankingViewState<HitterRankTrendRow, HitterRankViewMeta>;
   relief: RankingViewState<ReliefTrendRow, ReliefViewMeta>;
   injured: RankingViewState<InjuredPitcherTrendRow, InjuredViewMeta>;
   streamerHitters: RankingViewState<StreamerViewRow, StreamerViewMeta>;
@@ -332,6 +397,13 @@ export interface RankingViewsState {
 }
 
 const EMPTY_PITCHER_STATE: RankingViewState<PitcherTrendRow, PitcherViewMeta> = {
+  rows: [],
+  isLoading: false,
+  error: null,
+  meta: null,
+};
+
+const EMPTY_HITTER_RANK_STATE: RankingViewState<HitterRankTrendRow, HitterRankViewMeta> = {
   rows: [],
   isLoading: false,
   error: null,
@@ -363,11 +435,13 @@ export function useRankingViews({
   isReady,
   viewMode,
   pitcher,
+  hitterRank,
   relief,
   injured,
   streamerHitters,
   streamerPitchers,
   pitcherExecute = defaultPitcherViewExecute,
+  hitterRankExecute = defaultHitterRankViewExecute,
   reliefExecute = defaultReliefViewExecute,
   injuredExecute = defaultInjuredViewExecute,
   streamerHittersExecute = defaultStreamerHittersExecute,
@@ -375,6 +449,8 @@ export function useRankingViews({
 }: RankingViewsInput): RankingViewsState {
   const [pitcherState, setPitcherState] =
     useState<RankingViewState<PitcherTrendRow, PitcherViewMeta>>(EMPTY_PITCHER_STATE);
+  const [hitterRankState, setHitterRankState] =
+    useState<RankingViewState<HitterRankTrendRow, HitterRankViewMeta>>(EMPTY_HITTER_RANK_STATE);
   const [reliefState, setReliefState] =
     useState<RankingViewState<ReliefTrendRow, ReliefViewMeta>>(EMPTY_RELIEF_STATE);
   const [injuredState, setInjuredState] =
@@ -400,6 +476,24 @@ export function useRankingViews({
       }
     },
     [pitcherExecute],
+  );
+
+  const runHitterRank = useCallback(
+    async (input: HitterRankViewInput) => {
+      setHitterRankState((prev) => ({ ...prev, isLoading: true, error: null }));
+      try {
+        const { rows, meta } = await hitterRankExecute(input);
+        setHitterRankState({ rows, isLoading: false, error: null, meta });
+      } catch (err) {
+        setHitterRankState({
+          rows: [],
+          isLoading: false,
+          error: err instanceof Error ? err.message : String(err),
+          meta: null,
+        });
+      }
+    },
+    [hitterRankExecute],
   );
 
   const runRelief = useCallback(
@@ -480,6 +574,8 @@ export function useRankingViews({
     const timer = window.setTimeout(() => {
       if (viewMode === 'pitchers') {
         void runPitcher(pitcher);
+      } else if (viewMode === 'hitter-rankings') {
+        void runHitterRank(hitterRank);
       } else if (viewMode === 'relievers') {
         void runRelief(relief);
       } else if (viewMode === 'injured') {
@@ -498,11 +594,13 @@ export function useRankingViews({
     isReady,
     viewMode,
     pitcher,
+    hitterRank,
     relief,
     injured,
     streamerHitters,
     streamerPitchers,
     runPitcher,
+    runHitterRank,
     runRelief,
     runInjured,
     runStreamerHitters,
@@ -511,6 +609,7 @@ export function useRankingViews({
 
   return {
     pitcher: pitcherState,
+    hitterRank: hitterRankState,
     relief: reliefState,
     injured: injuredState,
     streamerHitters: streamerHittersState,
