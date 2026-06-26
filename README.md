@@ -57,15 +57,21 @@ A browser-based tool for evaluating **hitters, starting pitchers, relievers, and
 - POS column is reduced to a single display value; pitchers prefer handedness (`LHP`/`RHP`) and otherwise fall back to `SP` or `P`
 - Shows minor league stats (AB, AVG, HR, IP, ERA, WHIP, K/9) in selectable windows: Season, L30, L14, L7
 - Uses guarded fallback name repair when prospect stat rows contain replacement-character mojibake (for example, `Pe�a`) so rows still join to the correct player
-- **Trend emoji indicators** show performance across three windows simultaneously:
-  - Display order: `[L7] [14] [L30]` — one emoji per window
-  - `🔥` Hot — strong recent performance (see thresholds below)
-  - `🧊` Ice — poor recent performance
-  - `➖` Neutral — insufficient volume or performance within normal range
-	- Trend sorting is recency-weighted, so `L7` drives ordering more than `L14`, which drives ordering more than `L30`
-  - **Hitter thresholds (OPS-based):** 🔥 OPS ≥ .900 | 🧊 OPS ≤ .550 (L7) / ≤ .600 (L14/L30) — min AB: 10 (L7), 30 (L14), 60 (L30)
-	- **Pitcher thresholds (composite score):** Score = `(2.50/ERA)×40 + (0.90/WHIP)×35 + (K9/9.0)×25` — 🔥 score ≥ 85 | 🧊 score ≤ 50 (L7) / ≤ 55 (L14/L30) — min IP: 3 (L7), 6 (L14), 12/12 (L30 fire/ice)
-- Hover any trend cell for a per-window tooltip showing AB/OPS or IP/score
+- **Trend emoji indicators** show performance across three **disjoint** windows so a single hot week can no longer light all three:
+  - Display order: `[L7] [days 8–14] [days 15–30]` — one emoji per slice
+  - The feed exposes *cumulative* trailing windows (L7 ⊂ L14 ⊂ L30). These are de-aggregated client-side by volume-weighting into non-overlapping slices, so the `mid` and `old` emojis reflect only the time *outside* the recent window
+  - `🔥` Hot — strong performance in that slice (see thresholds below)
+  - `🧊` Ice — poor performance in that slice
+  - `➖` Neutral — insufficient marginal volume or performance within normal range
+  - Each slice must clear a **marginal volume floor** to render a verdict (hitter AB: 10 / 10 / 18; pitcher IP: 3 / 3 / 5 for recent / mid / old), and the slice metric is **regressed toward a neutral baseline** (shrinkage, `vol/(vol+K)`) before thresholding so thin samples don't reach fire/ice
+  - Trend sorting is recency-weighted, so the recent slice drives ordering more than `mid`, which drives ordering more than `old`
+  - **Hitter thresholds (OPS-based):** 🔥 shrunk OPS ≥ .900 | 🧊 ≤ .600 — neutral baseline .700, K = 25 AB
+  - **Pitcher thresholds (composite score):** Score = `(2.50/ERA)×40 + (0.90/WHIP)×35 + (K9/9.0)×25` — 🔥 shrunk score ≥ 85 | 🧊 ≤ 55 — neutral baseline 67, K = 8 IP
+- **Momentum column** (`Mom`) compares recent form against the rest of the season — `recent` = last 30 days (L30) vs `baseline` = season excluding the last 30 days (STD − L30, volume-weighted):
+  - Rendered as a diverging magnitude bar: improving grows right (green), declining grows left (red), bar length scales with magnitude, and the signed delta is shown beside it in native units. Within ±1 step (ΔOPS ±.075, Δscore ±7) the read is steady (muted); `—` when either half is below the volume floor (25 AB / 10 IP)
+  - Sortable on a scale-normalized index (`delta / step`) so hitters and pitchers rank in one column
+- Hover any Trend or Momentum cell for a tooltip in native units (AB/OPS or IP/score). On mobile, Momentum appears in the expanded row detail
+- Trend and momentum math lives in `src/lib/prospect-trend.ts` (`computeProspectTrend`, `computeProspectMomentum`) with unit tests in `prospect-trend.test.ts`
 - Roster status badge indicates whether the prospect is currently rostered in your league
 - Prospects without a Yahoo ownership match are labeled as Free Agent so team filters do not hide them
 - Optional ranking columns toggle (MLB rank, FG rank, Prospects Live rank)

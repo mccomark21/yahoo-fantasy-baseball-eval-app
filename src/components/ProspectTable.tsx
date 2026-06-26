@@ -18,12 +18,20 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import type { ProspectMinorLeagueStats, ProspectRow, ProspectStatsWindow } from '@/lib/queries';
+import type { ProspectRow, ProspectStatsWindow } from '@/lib/queries';
+import {
+  computeProspectMomentum,
+  computeProspectTrend,
+  getProspectRole,
+  parseProspectPositionCodes,
+  type ProspectMomentumResult,
+} from '@/lib/prospect-trend';
 
 type ProspectSortKey =
   | 'best_rank_bias_score'
   | 'player_name'
   | 'trend_score'
+  | 'momentum_score'
   | 'average_rank'
   | 'highest_rank'
   | 'lowest_rank'
@@ -35,17 +43,6 @@ interface ProspectTableProps {
   isLoading: boolean;
 }
 
-type ProspectRole = 'hitter' | 'pitcher' | 'two_way' | 'unknown';
-type WindowEmoji = '🔥' | '🧊' | '➖';
-
-interface ProspectTrendSummary {
-  emoji: string;
-  sortScore: number;
-  tooltip: string;
-}
-
-const PITCHER_POSITION_CODES = new Set(['P', 'SP', 'RP']);
-const HITTER_POSITION_CODES = new Set(['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'DH', 'UT']);
 const ORG_ABBREVIATIONS = new Map<string, string>([
   ['ARIZONA DIAMONDBACKS', 'ARI'],
   ['ARI', 'ARI'],
@@ -118,13 +115,6 @@ const ORG_ABBREVIATIONS = new Map<string, string>([
   ['WSH', 'WSH'],
 ]);
 
-function parsePositionCodes(positions: string): string[] {
-  return positions
-    .split(/[,/]/)
-    .map((position) => position.trim().toUpperCase())
-    .filter(Boolean);
-}
-
 function formatOrgAbbreviation(organization: string | null): string {
   if (!organization) return '—';
 
@@ -143,7 +133,7 @@ function formatOrgAbbreviation(organization: string | null): string {
 }
 
 function formatDisplayPosition(row: ProspectRow): string {
-  const codes = parsePositionCodes(row.positions);
+  const codes = parseProspectPositionCodes(row.positions);
   if (codes.length === 0) return '—';
 
   const role = getProspectRole(row);
@@ -160,119 +150,11 @@ function formatDisplayPosition(row: ProspectRow): string {
   return codes[0];
 }
 
-function getProspectRole(row: ProspectRow): ProspectRole {
-  const codes = parsePositionCodes(row.positions);
-
-  if (codes.length === 0) return 'unknown';
-
-  const hasPitchingCode = codes.some(
-    (code) => PITCHER_POSITION_CODES.has(code) || code === 'RHP' || code === 'LHP' || code.endsWith('P')
-  );
-  const hasHittingCode = codes.some((code) => HITTER_POSITION_CODES.has(code));
-
-  if (hasPitchingCode && hasHittingCode) return 'two_way';
-  if (hasPitchingCode) return 'pitcher';
-  if (hasHittingCode) return 'hitter';
-  return 'unknown';
-}
-
-// Volume thresholds (AB used as proxy for PA since minor league stats lack PA)
-const HITTER_MIN_AB: Record<'L7' | 'L14' | 'L30', number> = { L7: 10, L14: 30, L30: 60 };
-const PITCHER_FIRE_MIN_IP: Record<'L7' | 'L14' | 'L30', number> = { L7: 3, L14: 6, L30: 12 };
-const PITCHER_ICE_MIN_IP: Record<'L7' | 'L14' | 'L30', number> = { L7: 5, L14: 12, L30: 12 };
-
-const HITTER_OPS_FIRE = 0.9;
-const HITTER_OPS_ICE: Record<'L7' | 'L14' | 'L30', number> = { L7: 0.55, L14: 0.6, L30: 0.6 };
-
-const PITCHER_SCORE_FIRE = 85;
-const PITCHER_SCORE_ICE: Record<'L7' | 'L14' | 'L30', number> = { L7: 50, L14: 55, L30: 55 };
-const TREND_SORT_WEIGHTS: Record<'L7' | 'L14' | 'L30', number> = { L7: 9, L14: 3, L30: 1 };
-
-function getTrendSortValue(emoji: WindowEmoji): number {
-  if (emoji === '🔥') return 1;
-  if (emoji === '🧊') return -1;
-  return 0;
-}
-
-function calcPitcherCompositeScore(era: number | null, whip: number | null, k9: number | null): number | null {
-  if (era == null && whip == null && k9 == null) return null;
-  let score = 0;
-  if (era != null && era > 0) score += (2.5 / era) * 40;
-  if (whip != null && whip > 0) score += (0.9 / whip) * 35;
-  if (k9 != null) score += (k9 / 9.0) * 25;
-  return score;
-}
-
-function getHitterWindowEmoji(stats: ProspectMinorLeagueStats, window: 'L7' | 'L14' | 'L30'): WindowEmoji {
-  const ab = stats.atBats;
-  const ops = stats.ops;
-  if (ab == null || ab < HITTER_MIN_AB[window] || ops == null) return '➖';
-  if (ops >= HITTER_OPS_FIRE) return '🔥';
-  if (ops <= HITTER_OPS_ICE[window]) return '🧊';
-  return '➖';
-}
-
-function getPitcherWindowEmoji(stats: ProspectMinorLeagueStats, window: 'L7' | 'L14' | 'L30'): WindowEmoji {
-  const ip = stats.inningsPitched;
-  if (ip == null) return '➖';
-  const score = calcPitcherCompositeScore(stats.era, stats.whip, stats.strikeoutsPer9);
-  if (score == null) return '➖';
-  if (ip >= PITCHER_FIRE_MIN_IP[window] && score >= PITCHER_SCORE_FIRE) return '🔥';
-  if (ip >= PITCHER_ICE_MIN_IP[window] && score <= PITCHER_SCORE_ICE[window]) return '🧊';
-  return '➖';
-}
-
-function getTwoWayWindowEmoji(row: ProspectRow, window: 'L7' | 'L14' | 'L30'): WindowEmoji {
-  const stats = row.minor_league_stats[window];
-  const hitterEmoji = getHitterWindowEmoji(stats, window);
-  const pitcherEmoji = getPitcherWindowEmoji(stats, window);
-  // Fire takes precedence, then ice, then neutral
-  if (hitterEmoji === '🔥' || pitcherEmoji === '🔥') return '🔥';
-  if (hitterEmoji === '🧊' || pitcherEmoji === '🧊') return '🧊';
-  return '➖';
-}
-
-function getProspectTrendSummary(row: ProspectRow): ProspectTrendSummary {
-  const role = getProspectRole(row);
-  const windows: Array<'L7' | 'L14' | 'L30'> = ['L7', 'L14', 'L30'];
-
-  const emojis = windows.map((window): WindowEmoji => {
-    const stats = row.minor_league_stats[window];
-    if (role === 'pitcher') return getPitcherWindowEmoji(stats, window);
-    if (role === 'two_way') return getTwoWayWindowEmoji(row, window);
-    return getHitterWindowEmoji(stats, window); // hitter + unknown
-  });
-
-  const sortScore = emojis.reduce(
-    (acc, emoji, index) => acc + getTrendSortValue(emoji) * TREND_SORT_WEIGHTS[windows[index]],
-    0
-  );
-
-  const tooltipLines = windows.map((window, i) => {
-    const stats = row.minor_league_stats[window];
-    if (role === 'pitcher') {
-      const ip = stats.inningsPitched?.toFixed(1) ?? '—';
-      const s = calcPitcherCompositeScore(stats.era, stats.whip, stats.strikeoutsPer9);
-      return `${window}: ${emojis[i]}  IP ${ip}, score ${s != null ? s.toFixed(1) : '—'}`;
-    }
-    const ab = stats.atBats?.toFixed(0) ?? '—';
-    const ops = stats.ops?.toFixed(3) ?? '—';
-    return `${window}: ${emojis[i]}  AB ${ab}, OPS ${ops}`;
-  });
-
-  const tooltip = `Performance trend (${role.replace('_', '-')}) [L7] [L14] [L30]\n${tooltipLines.join('\n')}`;
-
-  return {
-    emoji: emojis.join(' '),
-    sortScore,
-    tooltip,
-  };
-}
-
 function getSortValue(row: ProspectRow, key: ProspectSortKey): number | string {
   if (key === 'player_name') return row.player_name;
   if (key === 'fantasy_team') return row.fantasy_team ?? 'zzzz';
-  if (key === 'trend_score') return getProspectTrendSummary(row).sortScore;
+  if (key === 'trend_score') return computeProspectTrend(row).sortScore;
+  if (key === 'momentum_score') return computeProspectMomentum(row).sortScore;
   return row[key] ?? Number.POSITIVE_INFINITY;
 }
 
@@ -292,6 +174,52 @@ function formatNum(value: number | null, digits = 2): string {
   if (value == null) return '—';
   if (Number.isNaN(value)) return '—';
   return value.toFixed(digits);
+}
+
+// |Δ| in steps (normalized units) that fills one half of the bar.
+const MOMENTUM_BAR_FULL_SCALE = 3;
+
+// Diverging magnitude bar: improving grows right (green), declining grows left
+// (red), length scales with magnitude. Direction is carried three ways — side,
+// color, and the signed delta — so it stays readable without relying on color.
+function MomentumCell({ momentum }: { momentum: ProspectMomentumResult }) {
+  if (!momentum.hasData) {
+    return (
+      <span className="text-muted-foreground" title={momentum.tooltip}>
+        —
+      </span>
+    );
+  }
+
+  const norm = momentum.sortScore; // signed Δ / step
+  const fillPct = Math.min(Math.abs(norm) / MOMENTUM_BAR_FULL_SCALE, 1) * 50;
+  const isUp = norm > 0;
+  const isSteady = Math.abs(norm) < 1; // within ±1 step → ➡️ steady
+
+  const fillColor = isSteady
+    ? 'bg-muted-foreground/40'
+    : isUp
+      ? 'bg-green-600 dark:bg-green-500'
+      : 'bg-red-600 dark:bg-red-500';
+
+  const deltaColor = isSteady
+    ? 'text-muted-foreground'
+    : isUp
+      ? 'text-green-700 dark:text-green-400'
+      : 'text-red-700 dark:text-red-400';
+
+  return (
+    <span className="inline-flex items-center gap-2" title={momentum.tooltip}>
+      <span className="relative h-2.5 w-12 shrink-0 rounded-sm bg-muted/50" aria-hidden="true">
+        <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border" />
+        <span
+          className={`absolute inset-y-0 ${isUp ? 'left-1/2 rounded-r-sm' : 'right-1/2 rounded-l-sm'} ${fillColor}`}
+          style={{ width: `${fillPct}%` }}
+        />
+      </span>
+      <span className={`text-xs tabular-nums ${deltaColor}`}>{momentum.deltaText}</span>
+    </span>
+  );
 }
 
 export function ProspectTable({ data, isLoading }: ProspectTableProps) {
@@ -325,7 +253,7 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
       return;
     }
     setSortKey(key);
-    setSortDesc(key === 'trend_score');
+    setSortDesc(key === 'trend_score' || key === 'momentum_score');
   };
 
   const sortIcon = (key: ProspectSortKey) => {
@@ -376,7 +304,8 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
             const isExpanded = expandedRows.has(rowKey);
             const rosterLabel = row.is_rostered ? 'Rostered' : 'Available';
             const stats = row.minor_league_stats[statsWindow];
-            const trend = getProspectTrendSummary(row);
+            const trend = computeProspectTrend(row);
+            const momentum = computeProspectMomentum(row);
 
             return (
               <div key={rowKey} className="border-b px-3 py-2.5">
@@ -385,14 +314,12 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                     <button
                       type="button"
                       onClick={() => toggleExpand(rowKey)}
-                      className="flex w-full items-center justify-between gap-2 text-left"
+                      className="flex w-full items-center gap-2 text-left"
                       aria-expanded={isExpanded}
                       aria-label={`Toggle details for ${row.player_name}`}
                     >
-                      <span className="font-medium truncate" title={trend.tooltip}>
-                        {row.player_name}
-                        {trend.emoji ? ` ${trend.emoji}` : ''}
-                      </span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{row.player_name}</span>
+                      <MomentumCell momentum={momentum} />
                       {isExpanded ? (
                         <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
                       ) : (
@@ -414,6 +341,9 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                 </div>
                 {isExpanded ? (
                   <div className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
+                    <div title={trend.tooltip}>
+                      Trend: <span className="font-mono">{trend.emoji || '—'}</span>
+                    </div>
                     <div>Team: {row.fantasy_team ?? 'Not Found'}</div>
                     <div>Ranks: MLB {row.mlb_rank ?? '—'} · FG {row.fangraphs_rank ?? '—'} · PLive {row.prospects_live_rank ?? '—'}</div>
                     <div>High/Low/StdDev: {row.highest_rank} / {row.lowest_rank} / {row.stddev_rank.toFixed(2)}</div>
@@ -481,6 +411,9 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
               <TableHead className="cursor-pointer select-none" onClick={() => setSort('trend_score')}>
                 <div className="flex items-center gap-1">Trend {sortIcon('trend_score')}</div>
               </TableHead>
+              <TableHead className="cursor-pointer select-none" onClick={() => setSort('momentum_score')}>
+                <div className="flex items-center gap-1">Mom {sortIcon('momentum_score')}</div>
+              </TableHead>
               <TableHead className="cursor-pointer select-none" onClick={() => setSort('player_name')}>
                 <div className="flex items-center gap-1">Prospect {sortIcon('player_name')}</div>
               </TableHead>
@@ -524,11 +457,15 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
                 const stats = row.minor_league_stats[statsWindow];
                 const hasHitterStats = stats.atBats != null || stats.avg != null;
                 const hasPitcherStats = stats.inningsPitched != null || stats.era != null || stats.whip != null;
-                const trend = getProspectTrendSummary(row);
+                const trend = computeProspectTrend(row);
+                const momentum = computeProspectMomentum(row);
 
                 return (
                   <TableRow key={row.norm_name}>
                     <TableCell className="font-mono tabular-nums" title={trend.tooltip}>{trend.emoji || '—'}</TableCell>
+                    <TableCell>
+                      <MomentumCell momentum={momentum} />
+                    </TableCell>
                     <TableCell className="font-medium">
                       {row.player_name}
                     </TableCell>
@@ -575,7 +512,7 @@ export function ProspectTable({ data, isLoading }: ProspectTableProps) {
               })
             ) : (
               <TableRow>
-                <TableCell colSpan={showRankingColumns ? 20 : 11} className="h-24 text-center">
+                <TableCell colSpan={showRankingColumns ? 21 : 12} className="h-24 text-center">
                   <EmptyState hint="Try clearing the Team, Level, or Age filters." />
                 </TableCell>
               </TableRow>
