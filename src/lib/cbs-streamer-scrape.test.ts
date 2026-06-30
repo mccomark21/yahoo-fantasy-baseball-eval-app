@@ -114,6 +114,7 @@ describe('enrichStreamerMatchupDates', () => {
         positions: ['1B'],
         games: 3,
         two_start: false,
+        blurb: null,
         matchups: [
           { date: null, opponent: 'DET', home: false },
           { date: null, opponent: 'DET', home: false },
@@ -144,6 +145,7 @@ describe('enrichStreamerMatchupDates', () => {
         positions: [],
         games: 1,
         two_start: false,
+        blurb: null,
         matchups: [{ date: null, opponent: 'TOR', home: true }],
       },
     ]

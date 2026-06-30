@@ -148,8 +148,7 @@ The app uses different ranking data behavior in local development versus product
 
 ### Scheduled Refresh Cadence (Production)
 
-- **Starting pitcher rankings** refresh weekly on Tuesday mornings (ET)
-- **Relief pitcher rankings** refresh weekly on Friday mornings (ET)
+- **All ranking sources** — starting pitchers, hitters, relievers (saves + SVHLD), prospects, injured pitchers, and CBS streamers — refresh together weekly on **Tuesday mornings (ET)** via a single GitHub Pages deploy (`RANKING_REFRESH_TARGET=all`). In-season (Apr–Oct) this runs at 9:00 AM ET. Each source independently falls back to its last deployed snapshot if its live scrape fails, so one fragile source can't fail the whole refresh.
 - **Yahoo roster CSV data** refreshes daily in-app (same-local-day cache policy)
 
 ## Key Features

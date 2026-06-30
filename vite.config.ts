@@ -1400,41 +1400,6 @@ export function parsePitcherListProspectsPage(html: string): ProspectSourceRow[]
   )
 }
 
-function parseTjStatsProspectsPage(html: string): ProspectSourceRow[] {
-  return parseSimpleProspectTableRows(
-    html,
-    'tjstats',
-    /rank\s+name\s+team\s+position\s+fv\s+age\s+height\s+weight\s+b\/t/i,
-    (cells) => {
-      const rank = Number.parseInt(cells[0] ?? '', 10)
-      if (!Number.isFinite(rank) || rank < 1 || rank > 100) return null
-
-      const playerName = repairMojibake(normalizeWhitespace(cells[2] ?? ''))
-      if (!playerName) return null
-
-      return {
-        source: 'tjstats',
-        rank,
-        player_name: playerName,
-        org: repairMojibake(normalizeWhitespace(cells[3] ?? '')).toUpperCase() || null,
-        positions: splitPositions(cells[4] ?? ''),
-        age: Number.isFinite(Number.parseFloat(cells[6] ?? '')) ? Math.round(Number.parseFloat(cells[6] ?? '') * 10) / 10 : null,
-        eta: null,
-        level: null,
-        height: normalizeHeightValue(cells[7] ?? ''),
-        weight: normalizeWeightValue(cells[8] ?? ''),
-        bats: normalizeBatThrowValue(cells[9]?.split('/')?.[0] ?? null),
-        throws: normalizeBatThrowValue(cells[9]?.split('/')?.[1] ?? null),
-        fv: normalizeWhitespace(cells[5] ?? '') || null,
-        ofp: null,
-        stats_summary: null,
-        scouting_report: null,
-        notes: null,
-      }
-    }
-  )
-}
-
 function parseTjStatsRankingsApi(payload: unknown): ProspectSourceRow[] {
   if (!Array.isArray(payload)) {
     return []
@@ -2585,8 +2550,8 @@ function staticApiSnapshotPlugin(): Plugin {
         await writeFile(path.join(outputDir, relativePath), JSON.stringify(payload), 'utf8')
       }
 
-      let pitcherPayload: PitcherListLatestResponse
-      if (refreshPitcher) {
+      const pitcherSnapshotUrl = buildProductionSnapshotUrl('pitcher-list/latest.json')
+      const scrapePitcherLive = async (): Promise<PitcherListLatestResponse> => {
         const pitcherCategoryHtml = await fetchHtml(PITCHER_LIST_CATEGORY_URL)
         const pitcherArticleUrl = extractLatestArticleUrl(
           pitcherCategoryHtml,
@@ -2595,24 +2560,30 @@ function staticApiSnapshotPlugin(): Plugin {
         )
         console.log(`[snapshot] selected pitcher article URL: ${pitcherArticleUrl}`)
         const pitcherArticleHtml = await fetchHtml(pitcherArticleUrl)
-        pitcherPayload = parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
-      } else {
-        const pitcherSnapshotUrl = buildProductionSnapshotUrl('pitcher-list/latest.json')
+        return parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
+      }
+      const loadDeployedPitcher = (): Promise<PitcherListLatestResponse> =>
+        fetchJsonSnapshot<PitcherListLatestResponse>(pitcherSnapshotUrl)
+
+      let pitcherPayload: PitcherListLatestResponse
+      if (refreshPitcher) {
         try {
-          pitcherPayload = await fetchJsonSnapshot<PitcherListLatestResponse>(pitcherSnapshotUrl)
+          pitcherPayload = await scrapePitcherLive()
+        } catch (error) {
+          console.warn(
+            `[snapshot] pitcher live scrape failed, falling back to deployed snapshot (${pitcherSnapshotUrl}): ${error instanceof Error ? error.message : String(error)}`
+          )
+          pitcherPayload = await loadDeployedPitcher()
+        }
+      } else {
+        try {
+          pitcherPayload = await loadDeployedPitcher()
           console.log(`[snapshot] reusing deployed pitcher snapshot: ${pitcherSnapshotUrl}`)
         } catch (error) {
           console.warn(
             `[snapshot] fallback failed for pitcher snapshot (${pitcherSnapshotUrl}), scraping live instead: ${error instanceof Error ? error.message : String(error)}`
           )
-          const pitcherCategoryHtml = await fetchHtml(PITCHER_LIST_CATEGORY_URL)
-          const pitcherArticleUrl = extractLatestArticleUrl(
-            pitcherCategoryHtml,
-            /\/top-100-starting-pitchers-for-[^/]+\/?$/i,
-            'Unable to find latest starting pitcher rankings article URL'
-          )
-          const pitcherArticleHtml = await fetchHtml(pitcherArticleUrl)
-          pitcherPayload = parsePitcherListArticle(pitcherArticleUrl, pitcherArticleHtml)
+          pitcherPayload = await scrapePitcherLive()
         }
       }
       await writeJsonSnapshot(path.join('pitcher-list', 'latest.json'), pitcherPayload)
@@ -2685,8 +2656,8 @@ function staticApiSnapshotPlugin(): Plugin {
       await writeJsonSnapshot(path.join('pitcher-list', 'history.json'), pitcherHistoryPayload)
 
       // ----- Hitter rankings (Pitcher List Top 150) -----
-      let hitterPayload: PitcherListLatestResponse
-      if (refreshHitter) {
+      const hitterSnapshotUrl = buildProductionSnapshotUrl('hitter-list/latest.json')
+      const scrapeHitterLive = async (): Promise<PitcherListLatestResponse> => {
         const hitterCategoryHtml = await fetchHtml(HITTER_LIST_CATEGORY_URL)
         const hitterArticleUrl = extractLatestArticleUrl(
           hitterCategoryHtml,
@@ -2695,24 +2666,30 @@ function staticApiSnapshotPlugin(): Plugin {
         )
         console.log(`[snapshot] selected hitter article URL: ${hitterArticleUrl}`)
         const hitterArticleHtml = await fetchHtml(hitterArticleUrl)
-        hitterPayload = parseHitterListArticle(hitterArticleUrl, hitterArticleHtml)
-      } else {
-        const hitterSnapshotUrl = buildProductionSnapshotUrl('hitter-list/latest.json')
+        return parseHitterListArticle(hitterArticleUrl, hitterArticleHtml)
+      }
+      const loadDeployedHitter = (): Promise<PitcherListLatestResponse> =>
+        fetchJsonSnapshot<PitcherListLatestResponse>(hitterSnapshotUrl)
+
+      let hitterPayload: PitcherListLatestResponse
+      if (refreshHitter) {
         try {
-          hitterPayload = await fetchJsonSnapshot<PitcherListLatestResponse>(hitterSnapshotUrl)
+          hitterPayload = await scrapeHitterLive()
+        } catch (error) {
+          console.warn(
+            `[snapshot] hitter live scrape failed, falling back to deployed snapshot (${hitterSnapshotUrl}): ${error instanceof Error ? error.message : String(error)}`
+          )
+          hitterPayload = await loadDeployedHitter()
+        }
+      } else {
+        try {
+          hitterPayload = await loadDeployedHitter()
           console.log(`[snapshot] reusing deployed hitter snapshot: ${hitterSnapshotUrl}`)
         } catch (error) {
           console.warn(
             `[snapshot] fallback failed for hitter snapshot (${hitterSnapshotUrl}), scraping live instead: ${error instanceof Error ? error.message : String(error)}`
           )
-          const hitterCategoryHtml = await fetchHtml(HITTER_LIST_CATEGORY_URL)
-          const hitterArticleUrl = extractLatestArticleUrl(
-            hitterCategoryHtml,
-            HITTER_LIST_ARTICLE_PATTERN,
-            'Unable to find latest hitter rankings article URL'
-          )
-          const hitterArticleHtml = await fetchHtml(hitterArticleUrl)
-          hitterPayload = parseHitterListArticle(hitterArticleUrl, hitterArticleHtml)
+          hitterPayload = await scrapeHitterLive()
         }
       }
       await writeJsonSnapshot(path.join('hitter-list', 'latest.json'), hitterPayload)
@@ -2784,9 +2761,11 @@ function staticApiSnapshotPlugin(): Plugin {
       }
       await writeJsonSnapshot(path.join('hitter-list', 'history.json'), hitterHistoryPayload)
 
-      let svhldPayload: ReliefListLatestResponse
-      let savesPayload: ReliefListLatestResponse
-      if (refreshRelief) {
+      const svhldSnapshotUrl = buildProductionSnapshotUrl('relief-list/latest.svhld.json')
+      const savesSnapshotUrl = buildProductionSnapshotUrl('relief-list/latest.saves.json')
+      const scrapeReliefLive = async (): Promise<
+        [ReliefListLatestResponse, ReliefListLatestResponse]
+      > => {
         const reliefCategoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL_SVHLD)
         const reliefArticleUrl = extractLatestArticleUrl(
           reliefCategoryHtml,
@@ -2795,30 +2774,39 @@ function staticApiSnapshotPlugin(): Plugin {
         )
         console.log(`[snapshot] selected relief article URL: ${reliefArticleUrl}`)
         const reliefArticleHtml = await fetchHtml(reliefArticleUrl)
-        svhldPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld')
-        savesPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves')
-      } else {
-        const svhldSnapshotUrl = buildProductionSnapshotUrl('relief-list/latest.svhld.json')
-        const savesSnapshotUrl = buildProductionSnapshotUrl('relief-list/latest.saves.json')
+        return [
+          parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld'),
+          parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves'),
+        ]
+      }
+      const loadDeployedRelief = (): Promise<
+        [ReliefListLatestResponse, ReliefListLatestResponse]
+      > =>
+        Promise.all([
+          fetchJsonSnapshot<ReliefListLatestResponse>(svhldSnapshotUrl),
+          fetchJsonSnapshot<ReliefListLatestResponse>(savesSnapshotUrl),
+        ])
+
+      let svhldPayload: ReliefListLatestResponse
+      let savesPayload: ReliefListLatestResponse
+      if (refreshRelief) {
         try {
-          ;[svhldPayload, savesPayload] = await Promise.all([
-            fetchJsonSnapshot<ReliefListLatestResponse>(svhldSnapshotUrl),
-            fetchJsonSnapshot<ReliefListLatestResponse>(savesSnapshotUrl),
-          ])
+          ;[svhldPayload, savesPayload] = await scrapeReliefLive()
+        } catch (error) {
+          console.warn(
+            `[snapshot] relief live scrape failed, falling back to deployed snapshots (${svhldSnapshotUrl}, ${savesSnapshotUrl}): ${error instanceof Error ? error.message : String(error)}`
+          )
+          ;[svhldPayload, savesPayload] = await loadDeployedRelief()
+        }
+      } else {
+        try {
+          ;[svhldPayload, savesPayload] = await loadDeployedRelief()
           console.log(`[snapshot] reusing deployed relief snapshots: ${svhldSnapshotUrl}, ${savesSnapshotUrl}`)
         } catch (error) {
           console.warn(
             `[snapshot] fallback failed for relief snapshots, scraping live instead: ${error instanceof Error ? error.message : String(error)}`
           )
-          const reliefCategoryHtml = await fetchHtml(RELIEF_LIST_CATEGORY_URL_SVHLD)
-          const reliefArticleUrl = extractLatestArticleUrl(
-            reliefCategoryHtml,
-            /\/fantasy-reliever-rankings-closers-holds-solds-[^/]+\/?$/i,
-            'Unable to find latest reliever rankings article URL'
-          )
-          const reliefArticleHtml = await fetchHtml(reliefArticleUrl)
-          svhldPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'svhld')
-          savesPayload = parseReliefListArticle(reliefArticleUrl, reliefArticleHtml, 'saves')
+          ;[svhldPayload, savesPayload] = await scrapeReliefLive()
         }
       }
       await writeJsonSnapshot(path.join('relief-list', 'latest.svhld.json'), svhldPayload)
@@ -2930,23 +2918,32 @@ function staticApiSnapshotPlugin(): Plugin {
         await writeJsonSnapshot(path.join('injured-pitchers', 'latest.json'), injuredPayload)
       }
 
+      const prospectsSnapshotUrl = buildProductionSnapshotUrl('prospects/latest.json')
+      const loadDeployedProspects = (): Promise<ProspectsLatestResponse> =>
+        fetchJsonSnapshot<ProspectsLatestResponse>(prospectsSnapshotUrl)
+
+      let prospectsPayload: ProspectsLatestResponse
       if (refreshProspects) {
-        const prospectsPayload = await fetchLatestProspects()
-        await writeJsonSnapshot(path.join('prospects', 'latest.json'), prospectsPayload)
-      } else {
-        const prospectsSnapshotUrl = buildProductionSnapshotUrl('prospects/latest.json')
         try {
-          const prospectsPayload = await fetchJsonSnapshot<ProspectsLatestResponse>(prospectsSnapshotUrl)
+          prospectsPayload = await fetchLatestProspects()
+        } catch (error) {
+          console.warn(
+            `[snapshot] prospects live scrape failed, falling back to deployed snapshot (${prospectsSnapshotUrl}): ${error instanceof Error ? error.message : String(error)}`
+          )
+          prospectsPayload = await loadDeployedProspects()
+        }
+      } else {
+        try {
+          prospectsPayload = await loadDeployedProspects()
           console.log(`[snapshot] reusing deployed prospects snapshot: ${prospectsSnapshotUrl}`)
-          await writeJsonSnapshot(path.join('prospects', 'latest.json'), prospectsPayload)
         } catch (error) {
           console.warn(
             `[snapshot] fallback failed for prospects snapshot, scraping live instead: ${error instanceof Error ? error.message : String(error)}`
           )
-          const prospectsPayload = await fetchLatestProspects()
-          await writeJsonSnapshot(path.join('prospects', 'latest.json'), prospectsPayload)
+          prospectsPayload = await fetchLatestProspects()
         }
       }
+      await writeJsonSnapshot(path.join('prospects', 'latest.json'), prospectsPayload)
 
       // CBS streamer snapshots. Live scrape is best-effort: on failure we reuse
       // the deployed snapshot, and if even that is unavailable we skip the write

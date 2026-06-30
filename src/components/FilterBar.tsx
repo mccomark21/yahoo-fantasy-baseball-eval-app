@@ -1,6 +1,6 @@
 ﻿import { useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import type { FilterOptions } from '@/lib/queries';
+import type { FilterOptions, TimeWindow } from '@/lib/queries';
 import type {
   HitterFilters,
   HitterRankFilters,
@@ -129,7 +129,9 @@ export function FilterBar({
               <label htmlFor="filter-league" className="text-xs font-medium text-muted-foreground">League</label>
               <Select
                 value={selectedLeague}
-                onValueChange={(v) => onLeagueChange(v)}
+                onValueChange={(v) => {
+                  if (v != null) onLeagueChange(v)
+                }}
               >
                 <SelectTrigger id="filter-league" className="w-full md:w-[200px]">
                   <SelectValue placeholder="League" />

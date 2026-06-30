@@ -5,7 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    # Tuesdays at 13:00 UTC (~9:00 AM ET during DST, ~8:00 AM ET in EST)
+    # Tuesdays at 13:00 UTC. The MLB season (Apr–Oct) is entirely on EDT, so this
+    # lands at 9:00 AM ET every in-season refresh; off-season it drifts to 8:00 AM
+    # EST, which is harmless. Refreshes every ranking source in one build
+    # (RANKING_REFRESH_TARGET=all); the relief- and CBS-only workflows were retired.
     - cron: '0 13 * * 2'
 
 permissions:
@@ -32,9 +35,15 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # Gate the deploy: a parser/type regression or failing test must not ship to Pages.
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
       - run: npm run build
         env:
-          RANKING_REFRESH_TARGET: pitcher
+          RANKING_REFRESH_TARGET: all
 
       - uses: actions/configure-pages@v5
 
