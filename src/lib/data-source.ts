@@ -30,8 +30,6 @@ export function useLoadData(): UseLoadDataResult {
 
   useEffect(() => {
     let cancelled = false;
-    setStatus('loading');
-    setError(null);
     loadData()
       .then(() => {
         if (!cancelled) setStatus('ready');
@@ -47,7 +45,14 @@ export function useLoadData(): UseLoadDataResult {
     };
   }, [retryCount]);
 
-  const retry = useCallback(() => setRetryCount((c) => c + 1), []);
+  // Reset to the loading state here in the event handler rather than inside the
+  // effect: the effect re-runs when `retryCount` changes and kicks off the load.
+  // The initial state is already `loading`, so no reset is needed on mount.
+  const retry = useCallback(() => {
+    setStatus('loading');
+    setError(null);
+    setRetryCount((c) => c + 1);
+  }, []);
 
   return { status, error, retry };
 }

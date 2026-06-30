@@ -28,7 +28,6 @@ import {
 import {
   computeWindowComposites,
   Z_QUALITY_WEIGHTS,
-  Z_WINDOW_WEIGHTS as Z_SCORE_WEIGHTS,
   Z_SCORE_DIRECTIONS,
   Z_CLAMP,
   type WindowRawMetrics,
